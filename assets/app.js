@@ -4,7 +4,7 @@
 
   const CFG = window.SITE_CONFIG || {};
   const app = document.getElementById("app");
-  const state = { recipes: [], memories: [], comments: [], query: "", category: "All", sort: "newest" };
+  const state = { recipes: [], memories: [], comments: [], covers: [], seen: {}, apiVersion: 0, query: "", category: "All", sort: "newest" };
 
   // ── Column matching ─────────────────────────────────────────
   // Each field is matched to the first unused sheet column whose header contains one of the keywords,
@@ -138,59 +138,69 @@
     if (usingSample) showNotice("Showing sample recipes. Connect your Google Forms in config.js to show your family's own (see README).");
 
     let sheetErr = null;
-    const [rRows, mRows, familyRows] = await Promise.all([
+    const [rRows, mRows, familyRows, site] = await Promise.all([
       fetchCSV(csvUrl(CFG.recipesGid, "data/sample-recipes.csv")).catch(err => { sheetErr = err; return []; }),
       fetchCSV(csvUrl(CFG.memoriesGid, "data/sample-memories.csv")).catch(err => { console.warn(err); return []; }),
       // Recipes typed up from the family's paper copies live in the repo, alongside form submissions.
       usingSample ? [] : fetchCSV("data/family-recipes.csv").catch(err => { console.warn(err); return []; }),
-      loadComments(),
+      loadSite(),
     ]);
+    state.apiVersion = site.version;
+    state.comments = site.comments.map(prepItem);
+    state.covers = site.covers.map(prepItem);
 
     if (sheetErr && !familyRows.length) throw sheetErr;
     if (sheetErr) console.warn(sheetErr);
 
-    const seen = {};
     state.recipes = [...toObjects(rRows, RECIPE_FIELDS), ...toObjects(familyRows, RECIPE_FIELDS)]
       .filter(r => r.title && !isHidden(r.hide))
-      .map(r => {
-        let slug = slugify(r.title);
-        seen[slug] = (seen[slug] || 0) + 1;
-        if (seen[slug] > 1) slug += "-" + seen[slug];
-        return { ...r, slug, ts: parseDate(r.timestamp), category: r.category || "Other", photos: photoUrls(r.photo) };
-      });
+      .concat(site.recipes.map(prepItem).filter(r => r.title))
+      .map(makeRecipe);
 
     state.memories = toObjects(mRows, MEMORY_FIELDS)
       .filter(m => m.text && !isHidden(m.hide))
       .map(m => ({ ...m, ts: parseDate(m.timestamp), photos: photoUrls(m.photo) }))
+      .concat(site.memories.map(prepItem).filter(m => m.text))
+      .map(linkMemory)
       .sort((a, b) => b.ts - a.ts);
-
-    // Link each memory to a recipe when the recipe name roughly matches.
-    for (const m of state.memories) {
-      const q = norm(m.recipe);
-      if (q.length < 3) continue;
-      m.linked = state.recipes.find(r => norm(r.title) === q)
-        || state.recipes.find(r => { const t = norm(r.title); return t.includes(q) || q.includes(t); });
-    }
   }
 
-  // ── Comments & photos (Apps Script web app, see google/comments-backend.gs) ──
-  async function loadComments() {
-    if (!CFG.commentsApiUrl) return;
+  // ── Site backend (Apps Script web app, see google/comments-backend.gs) ──
+  // Version 1 of the script only handled comments. Version 2 adds recipes, memories and cover photos;
+  // until it's deployed, "add a recipe/memory" falls back to the Google Forms.
+  async function loadSite() {
+    const empty = { version: 0, comments: [], recipes: [], memories: [], covers: [] };
+    if (!CFG.commentsApiUrl) return empty;
     try {
       const res = await fetch(CFG.commentsApiUrl, { cache: "no-store" });
-      const data = await res.json();
-      state.comments = (data.comments || []).map(prepComment);
+      const d = await res.json();
+      return { version: d.version || 1, comments: d.comments || [], recipes: d.recipes || [], memories: d.memories || [], covers: d.covers || [] };
     } catch (err) {
-      console.warn("Comments couldn't be loaded", err);
+      console.warn("Site data couldn't be loaded", err);
+      return empty;
     }
   }
 
-  function prepComment(c) {
+  const canPost = () => state.apiVersion >= 2;
+
+  function prepItem(c) {
     return { ...c, ts: +c.ts || 0, photos: photoUrls((c.photos || []).join(" ")) };
   }
 
+  async function postApi(payload) {
+    const res = await fetch(CFG.commentsApiUrl, { method: "POST", body: JSON.stringify(payload) });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Something went wrong.");
+    const item = data.item || data.comment;
+    return item ? prepItem(item) : null;
+  }
+
   const commentsFor = r => state.comments.filter(c => c.recipeId === r.slug).sort((a, b) => a.ts - b.ts);
-  const allPhotos = r => [...r.photos, ...commentsFor(r).flatMap(c => c.photos)];
+  const allPhotos = r => [...new Set([...r.photos, ...commentsFor(r).flatMap(c => c.photos)])];
+  function coverOf(r) {
+    const chosen = state.covers.filter(c => c.recipeId === r.slug && c.photos[0]).sort((a, b) => b.ts - a.ts)[0];
+    return chosen ? chosen.photos[0] : allPhotos(r)[0] || "";
+  }
 
   // Shrink photos in the browser before upload: phone pictures are huge, and this keeps uploads fast.
   function shrinkImage(file, maxSide = 1800, quality = 0.85) {
@@ -211,6 +221,67 @@
     });
   }
 
+  function savedName() { try { return localStorage.getItem("commenterName") || ""; } catch (e) { return ""; } }
+  function saveName(n) { try { localStorage.setItem("commenterName", n); } catch (e) { /* private mode */ } }
+
+  // ── Form building blocks ────────────────────────────────────
+  const field = (label, input, hint = "") =>
+    `<label><span>${label}${hint ? ` <span class="muted">${hint}</span>` : ""}</span>${input}</label>`;
+  const nameField = () => field("Your name", `<input name="name" required maxlength="100" autocomplete="name" value="${esc(savedName())}">`);
+  const photoField = (label, multiple = true) =>
+    `<div class="photo-field"><label class="photo-pick">📷 ${label}<input name="photos" type="file" accept="image/*"${multiple ? " multiple" : ""}></label><div class="previews"></div></div>`;
+  const submitRow = (label, extra = "") =>
+    `<input name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+     <div class="form-row"><button class="btn" type="submit">${label}</button>${extra}<span class="status" role="status"></span></div>`;
+
+  // Wires the photo field inside `form`. Returns a function that gives the chosen files.
+  function photoPicker(form, max = 6, onChange = () => {}) {
+    const input = form.querySelector("input[type=file]");
+    const previews = form.querySelector(".previews");
+    let files = [];
+    const show = () => {
+      previews.innerHTML = files.map((f, i) =>
+        `<div class="preview"><img src="${URL.createObjectURL(f)}" alt=""><button type="button" data-i="${i}" aria-label="Remove photo">×</button></div>`).join("");
+      previews.querySelectorAll("button").forEach(b => b.addEventListener("click", () => { files.splice(+b.dataset.i, 1); show(); onChange(files); }));
+    };
+    input.addEventListener("change", () => {
+      const picked = [...input.files].filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|gif|webp|heic)$/i.test(f.name));
+      files = (max === 1 ? picked : [...files, ...picked]).slice(0, max);
+      input.value = "";
+      show();
+      onChange(files);
+    });
+    return { files: () => files, clear: () => { files = []; show(); } };
+  }
+
+  // Common submit handling: name check, honeypot, shrinking photos, status messages.
+  // `build(name, photos)` returns the payload (or throws a friendly Error); `done(item)` runs on success.
+  function wireForm(form, { files = () => [], build, done, busy = "Saving…" }) {
+    const status = form.querySelector(".status");
+    const btn = form.querySelector("button[type=submit]");
+    form.addEventListener("submit", async e => {
+      e.preventDefault();
+      const name = form.elements.name.value.trim();
+      if (!name) { status.textContent = "Please add your name."; form.elements.name.focus(); return; }
+      btn.disabled = true;
+      try {
+        const chosen = files();
+        status.textContent = chosen.length ? "Uploading photos…" : busy;
+        const photos = await Promise.all(chosen.map(f => shrinkImage(f)));
+        const payload = build(name, photos);
+        const item = await postApi({ ...payload, name, website: form.elements.website.value });
+        saveName(name);
+        done(item);
+      } catch (err) {
+        console.error(err);
+        status.textContent = err.friendly ? err.message : `Sorry, that didn't save: ${err.message}`;
+        btn.disabled = false;
+      }
+    });
+  }
+  const friendly = msg => Object.assign(new Error(msg), { friendly: true });
+
+  // ── Comments ────────────────────────────────────────────────
   function commentHTML(c) {
     const when = c.ts ? new Date(c.ts).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
     return `<article class="comment">
@@ -221,9 +292,6 @@
     </article>`;
   }
 
-  function savedName() { try { return localStorage.getItem("commenterName") || ""; } catch (e) { return ""; } }
-  function saveName(n) { try { localStorage.setItem("commenterName", n); } catch (e) { /* private mode */ } }
-
   function commentsSection(r) {
     if (!CFG.commentsApiUrl) return "";
     const list = commentsFor(r);
@@ -231,14 +299,12 @@
       <section class="comments" id="comments">
         <h2 class="section-title">Comments &amp; photos</h2>
         <div class="comment-list">${list.length ? list.map(commentHTML).join("") : `<p class="muted">No comments yet. Made this one? Tell us how it went, or add a photo.</p>`}</div>
-        <form class="panel comment-form" novalidate>
+        <form class="panel site-form comment-form" novalidate>
           <h3>Add a comment or photos</h3>
-          <label>Your name<input name="name" required maxlength="100" autocomplete="name" value="${esc(savedName())}"></label>
-          <label><span>Comment <span class="muted">(optional if you're adding photos)</span></span><textarea name="text" rows="3" maxlength="4000" placeholder="Made this for Sunday dinner…"></textarea></label>
-          <label class="photo-pick">📷 Add photos<input name="photos" type="file" accept="image/*" multiple></label>
-          <div class="previews"></div>
-          <input name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
-          <div class="form-row"><button class="btn" type="submit">Post</button><span class="status" role="status"></span></div>
+          ${nameField()}
+          ${field("Comment", `<textarea name="text" rows="3" maxlength="4000" placeholder="Made this for Sunday dinner…"></textarea>`, "(optional if you're adding photos)")}
+          ${photoField("Add photos")}
+          ${submitRow("Post")}
         </form>
       </section>`;
   }
@@ -246,47 +312,192 @@
   function wireCommentForm(r) {
     const form = app.querySelector(".comment-form");
     if (!form) return;
-    const MAX = 6;
-    let files = [];
-    const previews = form.querySelector(".previews");
-    const status = form.querySelector(".status");
-    const showPreviews = () => {
-      previews.innerHTML = files.map((f, i) =>
-        `<div class="preview"><img src="${URL.createObjectURL(f)}" alt=""><button type="button" data-i="${i}" aria-label="Remove photo">×</button></div>`).join("");
-      previews.querySelectorAll("button").forEach(b => b.addEventListener("click", () => { files.splice(+b.dataset.i, 1); showPreviews(); }));
-    };
-    form.photos.addEventListener("change", () => {
-      files = [...files, ...form.photos.files].filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|gif|webp|heic)$/i.test(f.name)).slice(0, MAX);
-      form.photos.value = "";
-      showPreviews();
-    });
-    form.addEventListener("submit", async e => {
-      e.preventDefault();
-      const name = form.name.value.trim(), text = form.text.value.trim();
-      if (!name) { status.textContent = "Please add your name."; form.name.focus(); return; }
-      if (!text && !files.length) { status.textContent = "Add a comment or a photo."; return; }
-      const btn = form.querySelector("button[type=submit]");
-      btn.disabled = true;
-      status.textContent = files.length ? "Uploading photos…" : "Posting…";
-      try {
-        const photos = await Promise.all(files.map(f => shrinkImage(f)));
-        const res = await fetch(CFG.commentsApiUrl, {
-          method: "POST",
-          body: JSON.stringify({ recipeId: r.slug, recipe: r.title, name, text, photos, website: form.website.value }),
-        });
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Something went wrong.");
-        saveName(name);
-        if (data.comment) state.comments.push(prepComment(data.comment));
+    const picker = photoPicker(form);
+    wireForm(form, {
+      files: picker.files,
+      busy: "Posting…",
+      build: (name, photos) => {
+        const text = form.elements.text.value.trim();
+        if (!text && !photos.length) throw friendly("Add a comment or a photo.");
+        return { action: "comment", recipeId: r.slug, recipe: r.title, text, photos };
+      },
+      done: item => {
+        if (item) state.comments.push(item);
         renderRecipe(r.slug, { keepScroll: true });
         const s = app.querySelector(".comment-form .status");
         if (s) s.textContent = "Thanks! It's posted.";
-      } catch (err) {
-        console.error(err);
-        status.textContent = `Sorry, that didn't post: ${err.message}`;
-        btn.disabled = false;
-      }
+      },
     });
+  }
+
+  // ── Cover photo ─────────────────────────────────────────────
+  function coverSection(r) {
+    const cover = coverOf(r);
+    if (!cover && !canPost()) return "";
+    const pastCovers = state.covers.filter(c => c.recipeId === r.slug).flatMap(c => c.photos);
+    const others = [...new Set([...allPhotos(r), ...pastCovers])].filter(p => p !== cover);
+    return `
+      <div class="cover${cover ? "" : " cover-empty"}">
+        ${cover
+          ? `<img src="${esc(cover)}" alt="${esc(r.title)}" referrerpolicy="no-referrer">`
+          : `<div class="placeholder" style="background:${colorFor(r.category || r.title)}"></div>`}
+        ${canPost() ? `<button class="btn btn-small cover-btn" type="button" aria-expanded="false">${cover ? "📷 Change cover photo" : "＋ Add a cover photo"}</button>` : ""}
+      </div>
+      ${canPost() ? `
+      <form class="panel site-form cover-form" novalidate hidden>
+        <h3>${cover ? "Change the cover photo" : "Add a cover photo"}</h3>
+        ${nameField()}
+        ${others.length ? `
+          <div><span class="label">Pick a photo already on this recipe</span>
+            <div class="pick-grid">${others.map(p => `<button type="button" class="pick" data-photo="${esc(p)}" aria-pressed="false"><img src="${esc(p)}" alt="" loading="lazy" referrerpolicy="no-referrer"></button>`).join("")}</div>
+          </div>
+          <span class="muted">or upload a new one:</span>` : ""}
+        ${photoField(others.length ? "Upload a photo" : "Choose a photo", false)}
+        ${submitRow("Save cover", `<button class="btn btn-ghost cover-cancel" type="button">Cancel</button>`)}
+      </form>` : ""}`;
+  }
+
+  function wireCover(r) {
+    const form = app.querySelector(".cover-form");
+    if (!form) return;
+    const toggle = app.querySelector(".cover-btn");
+    const setOpen = open => {
+      form.hidden = !open;
+      toggle.setAttribute("aria-expanded", String(open));
+      if (open) form.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    };
+    toggle.addEventListener("click", () => setOpen(form.hidden));
+    form.querySelector(".cover-cancel").addEventListener("click", () => setOpen(false));
+
+    let existing = "";
+    const picks = [...form.querySelectorAll(".pick")];
+    const picker = photoPicker(form, 1, files => {
+      if (files.length) { existing = ""; picks.forEach(p => p.setAttribute("aria-pressed", "false")); }
+    });
+    picks.forEach(b => b.addEventListener("click", () => {
+      existing = b.getAttribute("aria-pressed") === "true" ? "" : b.dataset.photo;
+      picks.forEach(p => p.setAttribute("aria-pressed", String(p === b && !!existing)));
+      if (existing) picker.clear();
+    }));
+    wireForm(form, {
+      files: picker.files,
+      build: (name, photos) => {
+        if (!existing && !photos.length) throw friendly("Pick or upload a photo.");
+        return { action: "cover", recipeId: r.slug, recipe: r.title, existingPhoto: existing, photos };
+      },
+      done: item => {
+        if (item) state.covers.push(item);
+        renderRecipe(r.slug);
+      },
+    });
+  }
+
+  // ── Recipe and memory objects ───────────────────────────────
+  function makeRecipe(r) {
+    let slug = slugify(r.title);
+    state.seen[slug] = (state.seen[slug] || 0) + 1;
+    if (state.seen[slug] > 1) slug += "-" + state.seen[slug];
+    return { ...r, slug, ts: r.ts || parseDate(r.timestamp), category: r.category || "Other", photos: r.photos || photoUrls(r.photo) };
+  }
+
+  function linkMemory(m) {
+    const q = norm(m.recipe);
+    if (q.length < 3) return m;
+    m.linked = state.recipes.find(r => norm(r.title) === q)
+      || state.recipes.find(r => { const t = norm(r.title); return t.includes(q) || q.includes(t); });
+    return m;
+  }
+
+  // Where "add a recipe / memory" buttons go: the site's own forms, or the Google Forms as a fallback.
+  function addLink(kind, label, cls = "btn", recipe) {
+    if (canPost()) return `<a class="${cls}" href="#/add-${kind}${recipe ? "/" + esc(recipe.slug) : ""}">${label}</a>`;
+    const url = kind === "recipe" ? CFG.recipeFormUrl : memoryFormLink(recipe && recipe.title);
+    return url ? `<a class="${cls}" href="${esc(url)}" target="_blank" rel="noopener">${label}</a>` : "";
+  }
+
+  const CATEGORIES = ["Breakfast", "Appetizers & Snacks", "Soups & Salads", "Mains", "Sides", "Breads", "Desserts", "Drinks", "Holidays", "Other"];
+
+  function renderAddRecipe() {
+    if (!canPost()) { location.hash = "#/share"; return; }
+    const cats = [...new Set([...CATEGORIES, ...state.recipes.map(r => r.category)])];
+    app.innerHTML = `
+      <a class="back" href="#/">← All recipes</a>
+      <section class="hero hero-left"><h1>Add a recipe</h1><p>A family favorite, a holiday tradition, or the dish everyone asks you to bring.</p></section>
+      <form class="panel site-form add-form" novalidate>
+        ${field("Recipe name", `<input name="title" required maxlength="200" placeholder="Grandma's Sunday Pot Roast">`)}
+        <div class="two">
+          ${nameField()}
+          ${field("Whose recipe is it originally?", `<input name="origin" maxlength="200" placeholder="Grandma Ruth, Uncle Joe, or &quot;mine!&quot;">`)}
+        </div>
+        ${field("Category", `<select name="category">${cats.map(c => `<option${c === "Other" ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>`)}
+        ${field("The story behind it", `<textarea name="story" rows="3" placeholder="Where did it come from? When do you make it?"></textarea>`, "(optional)")}
+        ${field("Ingredients", `<textarea name="ingredients" rows="8" required placeholder="2 cups flour&#10;1 tsp. salt&#10;For the frosting:&#10;1 cup powdered sugar"></textarea>`, "(one per line; end a line with a colon to make a heading)")}
+        ${field("Instructions", `<textarea name="instructions" rows="8" required placeholder="Preheat oven to 350°.&#10;Mix the dry ingredients."></textarea>`, "(one step per line)")}
+        <div class="two">
+          ${field("Servings", `<input name="servings" maxlength="100" placeholder="8">`, "(optional)")}
+          ${field("How long does it take?", `<input name="time" maxlength="100" placeholder="1 hour">`, "(optional)")}
+        </div>
+        ${field("Notes &amp; tips", `<textarea name="notes" rows="3"></textarea>`, "(optional)")}
+        ${photoField("Add photos (the first one becomes the cover)")}
+        ${submitRow("Add recipe")}
+      </form>`;
+    const form = app.querySelector(".add-form");
+    const picker = photoPicker(form);
+    wireForm(form, {
+      files: picker.files,
+      build: (name, photos) => {
+        const v = k => form.elements[k].value.trim();
+        if (!v("title")) throw friendly("Please add the recipe name.");
+        if (!v("ingredients")) throw friendly("Please add the ingredients.");
+        if (!v("instructions")) throw friendly("Please add the instructions.");
+        return { action: "recipe", photos, ...Object.fromEntries(["title", "origin", "category", "story", "ingredients", "instructions", "servings", "time", "notes"].map(k => [k, v(k)])) };
+      },
+      done: item => {
+        const r = makeRecipe(item);
+        state.recipes.push(r);
+        location.hash = `#/recipe/${r.slug}`;
+      },
+    });
+    window.scrollTo(0, 0);
+  }
+
+  function renderAddMemory(slug) {
+    if (!canPost()) { location.hash = "#/share"; return; }
+    const pre = state.recipes.find(r => r.slug === slug);
+    const titles = [...state.recipes].sort((a, b) => a.title.localeCompare(b.title));
+    app.innerHTML = `
+      <a class="back" href="${pre ? `#/recipe/${esc(pre.slug)}` : "#/memories"}">← ${pre ? esc(pre.title) : "All memories"}</a>
+      <section class="hero hero-left"><h1>Share a memory</h1><p>A story, a photo, a moment in the kitchen. It doesn't have to be about food.</p></section>
+      <form class="panel site-form add-form" novalidate>
+        ${field("Your memory", `<textarea name="text" rows="6" required placeholder="Every Christmas Eve…"></textarea>`)}
+        <div class="two">
+          ${nameField()}
+          ${field("A short title", `<input name="title" maxlength="200" placeholder="Flour on the ceiling">`, "(optional)")}
+        </div>
+        ${field("Which recipe is it about?", `<select name="recipe"><option value="">None in particular</option>${titles.map(r => `<option${pre === r ? " selected" : ""}>${esc(r.title)}</option>`).join("")}</select>`, "(optional)")}
+        <div class="two">
+          ${field("Who's in it?", `<input name="people" maxlength="300" placeholder="Grandma, Dad, the cousins">`, "(optional)")}
+          ${field("When was it?", `<input name="when" maxlength="100" placeholder="Christmas 1994">`, "(optional)")}
+        </div>
+        ${photoField("Add photos")}
+        ${submitRow("Share memory")}
+      </form>`;
+    const form = app.querySelector(".add-form");
+    const picker = photoPicker(form);
+    wireForm(form, {
+      files: picker.files,
+      build: (name, photos) => {
+        const v = k => form.elements[k].value.trim();
+        if (!v("text")) throw friendly("Please write your memory.");
+        return { action: "memory", photos, ...Object.fromEntries(["text", "title", "recipe", "people", "when"].map(k => [k, v(k)])) };
+      },
+      done: item => {
+        const m = linkMemory({ ...item, by: item.by || "" });
+        state.memories.unshift(m);
+        location.hash = m.linked ? `#/recipe/${m.linked.slug}` : "#/memories";
+      },
+    });
+    window.scrollTo(0, 0);
   }
 
   function showNotice(text) {
@@ -297,7 +508,7 @@
 
   // ── Views ───────────────────────────────────────────────────
   function cardImage(item, label) {
-    const photo = item.slug ? allPhotos(item)[0] : item.photos && item.photos[0];
+    const photo = item.slug ? coverOf(item) : item.photos && item.photos[0];
     if (photo) return `<img src="${esc(photo)}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
     return `<div class="placeholder" style="background:${colorFor(item.category || label)}">${esc((label || "?").charAt(0).toUpperCase())}</div>`;
   }
@@ -332,8 +543,8 @@
         <h1>${esc(CFG.siteTitle || "Family Recipes")}</h1>
         <p>${esc(CFG.tagline || "")}</p>
         <div class="hero-actions">
-          ${CFG.recipeFormUrl ? `<a class="btn" href="${esc(CFG.recipeFormUrl)}" target="_blank" rel="noopener">＋ Add a recipe</a>` : ""}
-          ${CFG.memoryFormUrl ? `<a class="btn btn-ghost" href="${esc(CFG.memoryFormUrl)}" target="_blank" rel="noopener">Share a memory</a>` : ""}
+          ${addLink("recipe", "＋ Add a recipe")}
+          ${addLink("memory", "Share a memory", "btn btn-ghost")}
         </div>
       </section>
       <div class="toolbar">
@@ -396,7 +607,8 @@
       .filter(Boolean).map(l => `<li>${esc(l)}</li>`).join("");
 
     const mems = state.memories.filter(m => m.linked === r);
-    const shareLink = memoryFormLink(r.title);
+    const cover = coverOf(r);
+    const gallery = r.photos.filter(p => p !== cover);
 
     app.innerHTML = `
       <a class="back" href="#/">← All recipes</a>
@@ -405,7 +617,8 @@
         <h1>${esc(r.title)}</h1>
         <div class="facts">${facts}</div>
       </div>
-      ${r.photos.length ? `<div class="photos">${r.photos.map(p => `<img src="${esc(p)}" alt="${esc(r.title)}" referrerpolicy="no-referrer">`).join("")}</div>` : ""}
+      ${coverSection(r)}
+      ${gallery.length ? `<div class="photos">${gallery.map(p => `<img src="${esc(p)}" alt="${esc(r.title)}" referrerpolicy="no-referrer">`).join("")}</div>` : ""}
       ${r.story ? `<blockquote class="story">${paragraphs(r.story)}</blockquote>` : ""}
       <div class="recipe-cols">
         <section class="panel"><h2>Ingredients</h2><ul class="ingredients">${ingredients || "<li>—</li>"}</ul></section>
@@ -416,11 +629,12 @@
       <div class="recipe-actions">
         <button class="btn btn-ghost" onclick="window.print()">🖨 Print recipe</button>
         ${CFG.commentsApiUrl ? `<a class="btn btn-ghost" href="#comments" onclick="document.getElementById('comments').scrollIntoView({behavior:'smooth'});return false;">💬 Comments &amp; photos${commentsFor(r).length ? ` (${commentsFor(r).length})` : ""}</a>` : ""}
-        ${shareLink ? `<a class="btn btn-ghost" href="${esc(shareLink)}" target="_blank" rel="noopener">Share a memory about this recipe</a>` : ""}
+        ${addLink("memory", "Share a memory about this recipe", "btn btn-ghost", r)}
       </div>
       ${mems.length ? `<h2 class="section-title">Memories</h2><div class="memories card-memories">${mems.map(m => memoryCard(m, { showRecipe: false })).join("")}</div>` : ""}
       ${commentsSection(r)}`;
     wireCommentForm(r);
+    wireCover(r);
     if (!keepScroll) window.scrollTo(0, 0);
   }
 
@@ -429,7 +643,7 @@
       <section class="hero">
         <h1>Memories</h1>
         <p>Stories, moments and people from around the table.</p>
-        ${CFG.memoryFormUrl ? `<div class="hero-actions"><a class="btn" href="${esc(CFG.memoryFormUrl)}" target="_blank" rel="noopener">Share a memory</a></div>` : ""}
+        <div class="hero-actions">${addLink("memory", "Share a memory")}</div>
       </section>
       ${state.memories.length
         ? `<div class="memories">${state.memories.map(m => memoryCard(m)).join("")}</div>`
@@ -443,10 +657,10 @@
       <div class="share">
         <div class="panel"><div class="emoji">🥘</div><h2>Add a recipe</h2>
           <p>A family favorite, a holiday tradition, or the dish everyone asks you to bring.</p>
-          ${CFG.recipeFormUrl ? `<a class="btn" href="${esc(CFG.recipeFormUrl)}" target="_blank" rel="noopener">Open recipe form</a>` : missing}</div>
+          ${addLink("recipe", "Add a recipe") || missing}</div>
         <div class="panel"><div class="emoji">📷</div><h2>Share a memory</h2>
           <p>A story, a photo, a moment in the kitchen. It doesn't have to be about food.</p>
-          ${CFG.memoryFormUrl ? `<a class="btn" href="${esc(CFG.memoryFormUrl)}" target="_blank" rel="noopener">Open memory form</a>` : missing}</div>
+          ${addLink("memory", "Share a memory") || missing}</div>
       </div>`;
   }
 
@@ -456,10 +670,12 @@
     const [page, arg] = hash.split("/");
     document.title = CFG.siteTitle || "Family Recipes";
     document.querySelectorAll("[data-nav]").forEach(a =>
-      a.classList.toggle("active", (a.dataset.nav === "memories") === (page === "memories") && page !== "share"));
+      a.classList.toggle("active", (a.dataset.nav === "memories") === (page === "memories" || page === "add-memory") && !/^(share|add-)/.test(page)));
     if (page === "recipe") renderRecipe(decodeURIComponent(arg || ""));
     else if (page === "memories") renderMemories();
     else if (page === "share") renderShare();
+    else if (page === "add-recipe") renderAddRecipe();
+    else if (page === "add-memory") renderAddMemory(decodeURIComponent(arg || ""));
     else renderHome();
     if (page !== "recipe") window.scrollTo(0, 0);
   }

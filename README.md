@@ -98,26 +98,33 @@ memoryFormRecipeEntry: "entry.1234567890",
 - Put **each step on its own line**. Numbers are optional; the site numbers them for you.
 - Recipes can be printed cleanly with the **🖨 Print recipe** button.
 
-## Comments & photos
+## Comments, photos & adding from the site
 
-Every recipe page can have a **Comments & photos** section where anyone can leave a comment and add
-photos (up to 6 at a time) with no Google sign-in. It's powered by a small Google Apps Script that
-saves comments in a `Comments` tab of your responses sheet and photos in a shared Drive folder.
+Once the site backend is set up, anyone can do all of this right on the site, with no Google sign-in:
 
-One-time setup:
+- **Add a recipe or memory** (the *Add a recipe* / *Share a memory* buttons open forms on the site itself).
+- **Comment and add photos** on any recipe (up to 6 photos at a time).
+- **Add or change a recipe's cover photo**: open the recipe and click *Add a cover photo* or
+  *Change cover photo*. You can upload a new picture or pick one already on that recipe.
+
+It's powered by a Google Apps Script ([`google/comments-backend.gs`](google/comments-backend.gs)) that saves
+everything in tabs of your responses sheet (`Comments`, `Site Recipes`, `Site Memories`, `Covers`) and
+photos in a shared Drive folder. Recipes and memories sent through the Google Forms still show up too.
+
+**First-time setup**
 
 1. Open the **Merchen Family Recipes (responses)** sheet → **Extensions → Apps Script**.
-2. Click **＋ → Script**, name it `comments`, paste in all of
-   [`google/comments-backend.gs`](google/comments-backend.gs), and save.
-3. In the toolbar pick `setupComments` and click **▶ Run**. Approve the permissions (Google will warn
+2. Click **＋ → Script**, name it `comments`, paste in all of `google/comments-backend.gs`, and save.
+3. In the toolbar pick `setup` and click **▶ Run**. Approve the permissions (Google will warn
    that the app isn't verified; click *Advanced → Go to … (unsafe)*, which is normal for your own script).
-4. Click **Deploy → New deployment** → gear icon → **Web app**. Set *Execute as* **Me** and
-   *Who has access* **Anyone**, then **Deploy**.
+4. **Deploy → New deployment** → gear icon → **Web app**. *Execute as* **Me**, *Who has access* **Anyone** → **Deploy**.
 5. Copy the **Web app URL** (ends in `/exec`) into `commentsApiUrl` in `config.js`.
 
-New comments show up immediately. To hide one, type `yes` in its **Hide** column in the `Comments` tab.
-If you ever change the script, use **Deploy → Manage deployments → ✏️ → Version: New version** so the
-URL stays the same.
+**Updating the script later:** paste the new code over the old, save, run `setup` once, then
+**Deploy → Manage deployments → ✏️ → Version: New version → Deploy**. The URL stays the same.
+
+**Hiding something:** type `yes` in its **Hide** column (in whichever tab it's in). It disappears right away.
+For a cover photo, hiding the row puts the previous cover back.
 
 ## Previewing locally
 

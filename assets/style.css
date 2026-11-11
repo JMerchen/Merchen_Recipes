@@ -177,15 +177,16 @@ select { padding: 11px 14px; border-radius: 999px; border: 1.5px solid var(--lin
 .comment-text p { margin: 0 0 .6em; }
 .comment-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 8px; }
 .comment-photos img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; }
-.comment-form { display: grid; gap: 14px; }
-.comment-form h3 { font-size: 1.25rem; margin: 0; }
-.comment-form label { display: grid; gap: 6px; font-weight: 600; }
-.comment-form input:not([type=file]), .comment-form textarea {
+.site-form { display: grid; gap: 14px; }
+.site-form h3 { font-size: 1.25rem; margin: 0; }
+.site-form label { display: grid; gap: 6px; font-weight: 600; }
+.site-form input:not([type=file]), .site-form textarea, .site-form select {
   font: 400 1rem var(--sans); color: var(--ink); background: var(--bg);
   border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%;
 }
-.comment-form textarea { resize: vertical; }
-.comment-form input:focus, .comment-form textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.site-form textarea { resize: vertical; }
+.site-form select { border-radius: 10px; }
+.site-form input:focus, .site-form textarea:focus, .site-form select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .photo-pick {
   display: inline-flex !important; width: fit-content; cursor: pointer;
   border: 1.5px dashed var(--line); border-radius: 999px; padding: 9px 18px; color: var(--ink);
@@ -205,8 +206,29 @@ select { padding: 11px 14px; border-radius: 999px; border: 1.5px solid var(--lin
 .status { color: var(--ink-soft); }
 .hp { position: absolute; left: -9999px; }
 
+.label { display: block; font-weight: 600; margin-bottom: 6px; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.add-form { max-width: 760px; }
+.hero-left { text-align: left; padding-top: 0; }
+.hero-left p { margin-left: 0; }
+
+/* Cover photo */
+.cover { position: relative; margin-bottom: 20px; border-radius: var(--radius); overflow: hidden; background: var(--surface-2); }
+.cover img { width: 100%; max-height: 520px; object-fit: cover; }
+.cover-empty .placeholder { height: 200px; font-size: 5rem; }
+.cover-btn {
+  position: absolute; right: 14px; bottom: 14px;
+  background: var(--surface) !important; color: var(--ink) !important; box-shadow: var(--shadow);
+}
+.cover-empty .cover-btn { right: 50%; bottom: 50%; transform: translate(50%, 50%); }
+.cover-form { max-width: 760px; margin-bottom: 28px; }
+.pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.pick { padding: 0; border: 3px solid transparent; border-radius: 12px; background: none; cursor: pointer; overflow: hidden; }
+.pick img { width: 100%; aspect-ratio: 1; object-fit: cover; }
+.pick[aria-pressed="true"] { border-color: var(--accent); }
+
 @media print {
-  .site-header, .site-footer, .notice, .back, .recipe-actions, .comments, .section-title, .memories, .card-memories { display: none !important; }
+  .site-header, .site-footer, .notice, .back, .recipe-actions, .comments, .cover-btn, .cover-form, .cover-empty, .section-title, .memories, .card-memories { display: none !important; }
   body { background: #fff; color: #000; font-size: 12pt; }
   .panel { box-shadow: none; padding: 0; }
   .photos { display: none; }
