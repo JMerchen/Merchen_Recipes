@@ -137,13 +137,19 @@
     const usingSample = !(CFG.publishedSheetUrl || "").trim();
     if (usingSample) showNotice("Showing sample recipes. Connect your Google Forms in config.js to show your family's own (see README).");
 
-    const [rRows, mRows] = await Promise.all([
-      fetchCSV(csvUrl(CFG.recipesGid, "data/sample-recipes.csv")),
+    let sheetErr = null;
+    const [rRows, mRows, familyRows] = await Promise.all([
+      fetchCSV(csvUrl(CFG.recipesGid, "data/sample-recipes.csv")).catch(err => { sheetErr = err; return []; }),
       fetchCSV(csvUrl(CFG.memoriesGid, "data/sample-memories.csv")).catch(err => { console.warn(err); return []; }),
+      // Recipes typed up from the family's paper copies live in the repo, alongside form submissions.
+      usingSample ? [] : fetchCSV("data/family-recipes.csv").catch(err => { console.warn(err); return []; }),
     ]);
 
+    if (sheetErr && !familyRows.length) throw sheetErr;
+    if (sheetErr) console.warn(sheetErr);
+
     const seen = {};
-    state.recipes = toObjects(rRows, RECIPE_FIELDS)
+    state.recipes = [...toObjects(rRows, RECIPE_FIELDS), ...toObjects(familyRows, RECIPE_FIELDS)]
       .filter(r => r.title && !isHidden(r.hide))
       .map(r => {
         let slug = slugify(r.title);

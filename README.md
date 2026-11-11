@@ -86,6 +86,8 @@ memoryFormRecipeEntry: "entry.1234567890",
 - **Hide something** (a duplicate, a test entry): type `yes` in the **Hide** column for that row.
 - **Delete something:** delete the row in the sheet.
 - **Add a category:** edit the Category dropdown in the recipe form. The site picks up new categories automatically.
+- **Recipes typed up from paper copies** live in `data/family-recipes.csv` (same columns as the form's
+  sheet) and show up alongside form submissions. Edit that file on GitHub to fix one of them.
 - **Link a memory to a recipe:** the memory form's *"Which recipe?"* answer is matched to recipe names
   loosely (e.g. "pot roast" matches "Sunday Pot Roast"). Each recipe page also has a
   *Share a memory about this recipe* button that fills that answer in for you.
