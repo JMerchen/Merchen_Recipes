@@ -527,7 +527,11 @@
   function memoryCard(m, { showRecipe = true } = {}) {
     const meta = [m.by && `— ${m.by}`, m.when, m.people && `with ${m.people}`].filter(Boolean).join(" · ");
     return `<article class="memory">
-      ${m.photos.map(p => `<img src="${esc(p)}" alt="" loading="lazy" referrerpolicy="no-referrer">`).join("")}
+      ${m.photos.map(p => {
+        const k = gallerySlides().findIndex(s => s.m === m && s.src === p);
+        const img = `<img src="${esc(p)}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
+        return k < 0 ? img : `<a class="memory-photo" href="#/gallery/${k}" aria-label="Open in gallery">${img}</a>`;
+      }).join("")}
       <div class="memory-body">
         ${m.title ? `<h3>${esc(m.title)}</h3>` : ""}
         <div class="memory-text">${paragraphs(m.text)}</div>
@@ -643,7 +647,7 @@
       <section class="hero">
         <h1>Memories</h1>
         <p>Stories, moments and people from around the table.</p>
-        <div class="hero-actions">${addLink("memory", "Share a memory")}</div>
+        <div class="hero-actions">${addLink("memory", "Share a memory")}${gallerySlides().length ? `<a class="btn btn-ghost" href="#/gallery">▶ Photo slideshow</a>` : ""}</div>
       </section>
       ${state.memories.length
         ? `<div class="memories">${state.memories.map(m => memoryCard(m)).join("")}</div>`
@@ -664,16 +668,165 @@
       </div>`;
   }
 
+  // ── Photo gallery (slideshow of memory photos) ──────────────
+  const SLIDE_MS = 6000;
+  let galleryCleanup = null;
+
+  const gallerySlides = () => state.memories.flatMap(m => m.photos.map(src => ({ src, m })));
+
+  function renderGallery(startArg) {
+    const slides = gallerySlides();
+    if (!slides.length) {
+      app.innerHTML = `
+        <section class="hero"><h1>Gallery</h1><p>Photos from the family's memories will show up here as a slideshow.</p>
+          <div class="hero-actions">${addLink("memory", "Share a memory with a photo")}</div></section>`;
+      return;
+    }
+    let i = Math.min(Math.max(parseInt(startArg, 10) || 0, 0), slides.length - 1);
+    let playing = !/^\d+$/.test(startArg || "");  // opened from a specific photo: start paused on it
+    let timer = null;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    const caption = s => {
+      const m = s.m;
+      const meta = [m.by && `${m.by}`, m.when, m.people && `with ${m.people}`].filter(Boolean).join(" · ");
+      return `
+        ${m.title ? `<h2>${esc(m.title)}</h2>` : ""}
+        ${m.text ? `<p class="g-text">${esc(m.text)}</p>` : ""}
+        ${meta ? `<div class="g-meta">${esc(meta)}</div>` : ""}
+        ${m.linked ? `<a href="#/recipe/${esc(m.linked.slug)}">🍽 ${esc(m.linked.title)} →</a>` : ""}`;
+    };
+
+    app.innerHTML = `
+      <section class="hero hero-tight"><h1>Gallery</h1><p>Photos from the family's memories.</p></section>
+      <div class="gallery" tabindex="0" aria-roledescription="slideshow" aria-label="Memory photos">
+        <div class="g-stage">
+          ${slides.map((s, k) => `
+            <figure class="g-slide kb-${k % 4}" data-k="${k}" aria-hidden="true">
+              <img class="g-backdrop" data-src="${esc(s.src)}" alt="" referrerpolicy="no-referrer">
+              <img class="g-photo" data-src="${esc(s.src)}" alt="${esc(s.m.title || "Memory photo")}" referrerpolicy="no-referrer">
+            </figure>`).join("")}
+          <div class="g-progress"><span></span></div>
+          <button class="g-nav g-prev" type="button" aria-label="Previous photo">‹</button>
+          <button class="g-nav g-next" type="button" aria-label="Next photo">›</button>
+          <div class="g-caption" aria-live="polite"></div>
+        </div>
+        <div class="g-controls">
+          <button class="btn btn-ghost btn-small g-play" type="button"></button>
+          <span class="g-count"></span>
+          <button class="btn btn-ghost btn-small g-full" type="button">⛶ Full screen</button>
+        </div>
+        <div class="g-thumbs">${slides.map((s, k) =>
+          `<button class="g-thumb" type="button" data-k="${k}" aria-label="Photo ${k + 1}"><img data-src="${esc(s.src)}" alt="" referrerpolicy="no-referrer"></button>`).join("")}</div>
+      </div>`;
+
+    const root = app.querySelector(".gallery");
+    const figs = [...root.querySelectorAll(".g-slide")];
+    const thumbs = [...root.querySelectorAll(".g-thumb")];
+    const strip = root.querySelector(".g-thumbs");
+    const cap = root.querySelector(".g-caption");
+    const bar = root.querySelector(".g-progress span");
+    const playBtn = root.querySelector(".g-play");
+    const load = el => { if (el && el.dataset.src && !el.src) el.src = el.dataset.src; };
+
+    function show(k) {
+      i = (k + slides.length) % slides.length;
+      [i, i + 1, i - 1].forEach(n => figs[(n + slides.length) % slides.length].querySelectorAll("img").forEach(load));
+      figs.forEach((f, n) => {
+        const on = n === i;
+        f.classList.toggle("active", on);
+        f.setAttribute("aria-hidden", String(!on));
+      });
+      thumbs.forEach((t, n) => t.setAttribute("aria-current", String(n === i)));
+      const t = thumbs[i];
+      strip.scrollTo({ left: t.offsetLeft - strip.clientWidth / 2 + t.clientWidth / 2, behavior: reduced ? "auto" : "smooth" });
+      cap.classList.remove("in");
+      void cap.offsetWidth;  // restart the caption's fade-in
+      cap.innerHTML = caption(slides[i]);
+      cap.classList.add("in");
+      root.querySelector(".g-count").textContent = `${i + 1} / ${slides.length}`;
+      history.replaceState(null, "", `#/gallery/${i}`);
+      restartTimer();
+    }
+
+    function restartTimer() {
+      clearTimeout(timer);
+      bar.style.transition = "none";
+      bar.style.width = "0";
+      if (!playing || slides.length < 2) return;
+      void bar.offsetWidth;
+      bar.style.transition = `width ${SLIDE_MS}ms linear`;
+      bar.style.width = "100%";
+      timer = setTimeout(() => show(i + 1), SLIDE_MS);
+    }
+
+    function setPlaying(on) {
+      playing = on && slides.length > 1;
+      playBtn.textContent = playing ? "❚❚ Pause" : "▶ Play";
+      playBtn.hidden = slides.length < 2;
+      root.classList.toggle("paused", !playing);
+      restartTimer();
+    }
+
+    root.querySelector(".g-prev").addEventListener("click", () => show(i - 1));
+    root.querySelector(".g-next").addEventListener("click", () => show(i + 1));
+    playBtn.addEventListener("click", () => setPlaying(!playing));
+    thumbs.forEach(t => t.addEventListener("click", () => show(+t.dataset.k)));
+    thumbs.forEach(t => load(t.querySelector("img")));
+
+    const fullBtn = root.querySelector(".g-full");
+    if (!root.requestFullscreen) fullBtn.hidden = true;
+    fullBtn.addEventListener("click", () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else root.requestFullscreen().catch(() => {});
+    });
+
+    // Swipe on phones
+    let x0 = null;
+    const stage = root.querySelector(".g-stage");
+    stage.addEventListener("touchstart", e => { x0 = e.touches[0].clientX; }, { passive: true });
+    stage.addEventListener("touchend", e => {
+      if (x0 == null) return;
+      const dx = e.changedTouches[0].clientX - x0;
+      x0 = null;
+      if (Math.abs(dx) > 40) show(dx < 0 ? i + 1 : i - 1);
+    });
+
+    const onKey = e => {
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      if (e.key === "ArrowRight") show(i + 1);
+      else if (e.key === "ArrowLeft") show(i - 1);
+      else if (e.key === " " && e.target.closest(".gallery")) { e.preventDefault(); setPlaying(!playing); }
+    };
+    // Don't advance while the tab is in the background.
+    const onVis = () => { if (document.hidden) clearTimeout(timer); else restartTimer(); };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("visibilitychange", onVis);
+    galleryCleanup = () => {
+      clearTimeout(timer);
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("visibilitychange", onVis);
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    };
+
+    setPlaying(playing);
+    show(i);
+  }
+
   // ── Router ──────────────────────────────────────────────────
   function route() {
     const hash = location.hash.replace(/^#\/?/, "");
     const [page, arg] = hash.split("/");
     document.title = CFG.siteTitle || "Family Recipes";
-    document.querySelectorAll("[data-nav]").forEach(a =>
-      a.classList.toggle("active", (a.dataset.nav === "memories") === (page === "memories" || page === "add-memory") && !/^(share|add-)/.test(page)));
+    if (galleryCleanup) { galleryCleanup(); galleryCleanup = null; }
+    const section = page === "memories" || page === "add-memory" ? "memories"
+      : page === "gallery" ? "gallery"
+      : page === "share" || page === "add-recipe" ? "" : "recipes";
+    document.querySelectorAll("[data-nav]").forEach(a => a.classList.toggle("active", a.dataset.nav === section));
     if (page === "recipe") renderRecipe(decodeURIComponent(arg || ""));
     else if (page === "memories") renderMemories();
     else if (page === "share") renderShare();
+    else if (page === "gallery") renderGallery(arg);
     else if (page === "add-recipe") renderAddRecipe();
     else if (page === "add-memory") renderAddMemory(decodeURIComponent(arg || ""));
     else renderHome();

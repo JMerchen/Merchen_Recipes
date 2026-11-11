@@ -63,6 +63,10 @@ h1, h2, h3 { font-family: var(--serif); line-height: 1.15; margin: 0 0 .4em; fon
   font: 600 1rem var(--sans); text-decoration: none !important; cursor: pointer;
 }
 .btn:hover { filter: brightness(1.06); }
+.btn { white-space: nowrap; }
+@media (max-width: 440px) { .nav { gap: 12px; font-size: .95rem; } .nav .btn-small { padding: 7px 12px; } }
+#nav-add .short { display: none; }
+@media (max-width: 400px) { #nav-add .long { display: none; } #nav-add .short { display: inline; } }
 .btn-ghost { background: transparent; color: var(--ink) !important; border: 1.5px solid var(--line); }
 .btn-small { padding: 7px 16px; font-size: .95rem; }
 
@@ -227,6 +231,73 @@ select { padding: 11px 14px; border-radius: 999px; border: 1.5px solid var(--lin
 .pick { padding: 0; border: 3px solid transparent; border-radius: 12px; background: none; cursor: pointer; overflow: hidden; }
 .pick img { width: 100%; aspect-ratio: 1; object-fit: cover; }
 .pick[aria-pressed="true"] { border-color: var(--accent); }
+
+/* Gallery */
+.hero-tight { padding-bottom: 20px; }
+.memory-photo { display: block; }
+.gallery { outline: none; }
+.g-stage {
+  position: relative; overflow: hidden; border-radius: var(--radius);
+  background: #14110f; height: min(72vh, 680px); min-height: 320px; box-shadow: var(--shadow);
+}
+.g-slide { position: absolute; inset: 0; margin: 0; opacity: 0; transition: opacity 1.2s ease; }
+.g-slide.active { opacity: 1; z-index: 1; }
+.g-backdrop { position: absolute; inset: -40px; width: calc(100% + 80px); height: calc(100% + 80px); max-width: none; object-fit: cover; filter: blur(32px) brightness(.55); }
+.g-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+/* Slow "Ken Burns" drift on the showing photo; four directions so it doesn't feel repetitive. */
+.g-slide.active .g-photo { animation: kb 9s ease-out both; }
+.kb-1.active .g-photo { animation-name: kb1; }
+.kb-2.active .g-photo { animation-name: kb2; }
+.kb-3.active .g-photo { animation-name: kb3; }
+.paused .g-slide.active .g-photo { animation-play-state: paused; }
+@keyframes kb  { from { transform: scale(1.0) translate(0, 0); }      to { transform: scale(1.08) translate(-1.5%, -1%); } }
+@keyframes kb1 { from { transform: scale(1.08) translate(1.5%, 0); }  to { transform: scale(1.0) translate(0, 0); } }
+@keyframes kb2 { from { transform: scale(1.0) translate(0, 1%); }     to { transform: scale(1.08) translate(1.5%, -1%); } }
+@keyframes kb3 { from { transform: scale(1.08) translate(0, -1%); }   to { transform: scale(1.02) translate(-1%, 1%); } }
+.g-progress { position: absolute; left: 0; right: 0; top: 0; height: 3px; z-index: 3; background: rgba(255,255,255,.15); }
+.g-progress span { display: block; height: 100%; width: 0; background: var(--accent); }
+.g-nav {
+  position: absolute; top: 50%; z-index: 3; transform: translateY(-50%);
+  width: 48px; height: 48px; border-radius: 50%; border: 0; cursor: pointer;
+  background: rgba(20, 17, 15, .45); color: #fff; font-size: 2rem; line-height: 1;
+  display: grid; place-items: center; transition: background .2s;
+}
+.g-nav:hover { background: rgba(20, 17, 15, .75); }
+.g-prev { left: 12px; } .g-next { right: 12px; }
+.g-caption {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; color: #fff;
+  padding: 64px 28px 22px; background: linear-gradient(transparent, rgba(0,0,0,.78));
+  opacity: 0; transform: translateY(12px);
+}
+.g-caption.in { animation: capIn .9s .25s ease forwards; }
+@keyframes capIn { to { opacity: 1; transform: none; } }
+.g-caption h2 { font-size: clamp(1.3rem, 3vw, 1.9rem); margin-bottom: 4px; }
+.g-text { margin: 0 0 6px; max-width: 46em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.g-meta { font-size: .92rem; opacity: .85; }
+.g-caption a { color: #fff; font-weight: 600; font-size: .95rem; display: inline-block; margin-top: 6px; }
+.g-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0 10px; }
+.g-count { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.g-thumbs { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 10px; scrollbar-width: thin; }
+.g-thumb { flex: none; width: 76px; height: 76px; padding: 0; border: 3px solid transparent; border-radius: 10px; overflow: hidden; cursor: pointer; background: var(--surface-2); opacity: .6; transition: opacity .2s, border-color .2s; }
+.g-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.g-thumb:hover { opacity: .9; }
+.g-thumb[aria-current="true"] { opacity: 1; border-color: var(--accent); }
+.gallery:fullscreen { background: #000; padding: 0; display: flex; flex-direction: column; }
+.gallery:fullscreen .g-stage { flex: 1; height: auto; border-radius: 0; }
+.gallery:fullscreen .g-controls { padding: 0 16px; color: #fff; }
+.gallery:fullscreen .g-controls .btn-ghost { color: #fff !important; border-color: rgba(255,255,255,.3); }
+.gallery:fullscreen .g-thumbs { padding: 0 16px 12px; }
+@media (max-width: 600px) {
+  .g-stage { height: 62vh; }
+  .g-nav { width: 40px; height: 40px; font-size: 1.6rem; }
+  .g-caption { padding: 48px 18px 16px; }
+  .g-full { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-slide { transition-duration: .3s; }
+  .g-slide.active .g-photo { animation: none; }
+  .g-caption.in { animation-duration: .2s; animation-delay: 0s; }
+}
 
 @media print {
   .site-header, .site-footer, .notice, .back, .recipe-actions, .comments, .cover-btn, .cover-form, .cover-empty, .section-title, .memories, .card-memories { display: none !important; }
