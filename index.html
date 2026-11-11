@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Merchen Family Recipes</title>
+  <meta name="description" content="Family recipes and the memories that go with them.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥧</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="#/"><span class="brand-mark" aria-hidden="true">✻</span> <span id="site-title">Merchen Family Recipes</span></a>
+      <nav class="nav">
+        <a href="#/" data-nav="recipes">Recipes</a>
+        <a href="#/memories" data-nav="memories">Memories</a>
+        <a class="btn btn-small" id="nav-add" href="#/share">Share something</a>
+      </nav>
+    </div>
+  </header>
+
+  <div id="notice" class="notice" hidden></div>
+  <main id="app" class="wrap" aria-live="polite">
+    <p class="loading">Warming up the oven…</p>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">Made with love by the Merchen family. <a href="#/share">Add a recipe or memory →</a></div>
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>
