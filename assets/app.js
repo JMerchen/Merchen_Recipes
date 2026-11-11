@@ -543,9 +543,12 @@
   function renderHome() {
     const cats = ["All", ...Array.from(new Set(state.recipes.map(r => r.category))).sort()];
     app.innerHTML = `
-      <section class="hero">
-        <h1>${esc(CFG.siteTitle || "Family Recipes")}</h1>
-        <p>${esc(CFG.tagline || "")}</p>
+      <section class="hero${CFG.familyPhoto ? " hero-photo" : ""}">
+        ${CFG.familyPhoto
+          ? `<h1 class="visually-hidden">${esc(CFG.siteTitle || "Family Recipes")}</h1>
+             <a href="#/gallery" class="family-photo" aria-label="Open the gallery"><img src="${esc(CFG.familyPhoto)}" alt="${esc(CFG.familyPhotoCaption || "Our family")}" width="2048" height="1113"></a>`
+          : `<h1>${esc(CFG.siteTitle || "Family Recipes")}</h1>
+             <p>${esc(CFG.tagline || "")}</p>`}
         <div class="hero-actions">
           ${addLink("recipe", "＋ Add a recipe")}
           ${addLink("memory", "Share a memory", "btn btn-ghost")}
@@ -673,7 +676,12 @@
   const GALLERY_SUGGESTIONS = ["Holidays", "Summer", "Winter", "Birthdays", "Desserts"];
   let galleryCleanup = null;
 
-  const gallerySlides = () => state.memories.flatMap(m => m.photos.map(src => ({ src, m })));
+  // The family photo (config.js) leads the slideshow; the rest are memory photos.
+  let familySlide = null;
+  const gallerySlides = () => {
+    if (CFG.familyPhoto && !familySlide) familySlide = { src: CFG.familyPhoto, m: { title: CFG.familyPhotoCaption || "", photos: [] } };
+    return [...(familySlide ? [familySlide] : []), ...state.memories.flatMap(m => m.photos.map(src => ({ src, m })))];
+  };
 
   function renderGallery(startArg) {
     const all = gallerySlides();
@@ -701,7 +709,9 @@
     const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
     function showFor(memories, start, autoplay) {
       const order = new Map(memories.map((m, k) => [m, k]));
-      const slides = all.filter(s => order.has(s.m)).sort((a, b) => order.get(a.m) - order.get(b.m));
+      const showFamily = !norm(input.value);  // the family photo shows when not searching
+      const rank = s => (s === familySlide ? -1 : order.get(s.m));
+      const slides = all.filter(s => order.has(s.m) || (showFamily && s === familySlide)).sort((a, b) => rank(a) - rank(b));
       if (stopShow) { stopShow(); stopShow = null; }
       if (!slides.length) { showEl.innerHTML = ""; return 0; }
       stopShow = buildSlideshow(showEl, slides, start, autoplay, !norm(input.value));

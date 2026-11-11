@@ -80,6 +80,11 @@ main { padding-block: 32px 64px; min-height: 60vh; }
 .hero h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); }
 .hero p { color: var(--ink-soft); font-size: 1.15rem; margin: 0 auto 24px; max-width: 34em; }
 .hero-actions { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+.hero-photo { padding-top: 8px; }
+.family-photo { display: block; max-width: 1040px; margin: 0 auto 26px; border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
+.family-photo img { width: 100%; height: auto; transition: transform .6s ease; }
+.family-photo:hover img { transform: scale(1.015); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* Toolbar */
 .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 8px 0 24px; }

@@ -7,6 +7,11 @@ window.SITE_CONFIG = {
   siteTitle: "Merchen Family Recipes",
   tagline: "Recipes and memories from around our kitchen table",
 
+  // Family photo shown at the top of the home page (in place of the title) and first in the gallery.
+  // Leave empty to show the title and tagline instead.
+  familyPhoto: "assets/family.jpg",
+  familyPhotoCaption: "The Merchen family",
+
   // Google Sheet → File → Share → Publish to web → "Entire document" → Publish.
   // Paste the link it gives you here (any format is fine).
   publishedSheetUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSXL_Nmyp0UtkSCHlKvU9_d7gIhoxpFdPgpDvJ_ymUhinnHCsZ6oqjtC1NB9TCjTli7vBVlJNDWVqrJ/pubhtml",
