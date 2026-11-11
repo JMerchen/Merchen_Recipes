@@ -25,5 +25,5 @@ window.SITE_CONFIG = {
 
   // Web app URL (ends in /exec) from deploying google/comments-backend.gs.
   // Turns on "Comments & photos" under every recipe. Leave empty to hide it.
-  commentsApiUrl: "",
+  commentsApiUrl: "https://script.google.com/macros/s/AKfycbyMsbhuECCbHVohl1bU8m03J7uoGri1MMZhCWaAT9T88dzCCGrpRC2-FubTiXwbOenn/exec",
 };
