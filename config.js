@@ -9,17 +9,17 @@ window.SITE_CONFIG = {
 
   // Google Sheet → File → Share → Publish to web → "Entire document" → Publish.
   // Paste the link it gives you here (any format is fine).
-  publishedSheetUrl: "",
+  publishedSheetUrl: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSXL_Nmyp0UtkSCHlKvU9_d7gIhoxpFdPgpDvJ_ymUhinnHCsZ6oqjtC1NB9TCjTli7vBVlJNDWVqrJ/pubhtml",
 
   // Tab IDs ("gid") of the two response tabs in that sheet.
-  recipesGid: "",
-  memoriesGid: "",
+  recipesGid: "1703154401",
+  memoriesGid: "1319681349",
 
   // The public "viewform" links to the two Google Forms.
-  recipeFormUrl: "",
-  memoryFormUrl: "",
+  recipeFormUrl: "https://docs.google.com/forms/d/e/1FAIpQLSdFwMAxd37q-STKBctyB64yrzRbEocVyHQIYQnk822calMQ9w/viewform",
+  memoryFormUrl: "https://docs.google.com/forms/d/e/1FAIpQLSfx2wxDDlGofZbHb2urZaHBcqE71cddd5uPH45yC-dNLWmrwQ/viewform",
 
   // Optional: lets "Share a memory about this recipe" pre-fill the recipe name.
   // Looks like "entry.123456789". The setup script prints it.
-  memoryFormRecipeEntry: "",
+  memoryFormRecipeEntry: "entry.1612679184",
 };
