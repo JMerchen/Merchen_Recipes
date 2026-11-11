@@ -4,7 +4,7 @@
 
   const CFG = window.SITE_CONFIG || {};
   const app = document.getElementById("app");
-  const state = { recipes: [], memories: [], query: "", category: "All", sort: "newest" };
+  const state = { recipes: [], memories: [], comments: [], query: "", category: "All", sort: "newest" };
 
   // ── Column matching ─────────────────────────────────────────
   // Each field is matched to the first unused sheet column whose header contains one of the keywords,
@@ -143,6 +143,7 @@
       fetchCSV(csvUrl(CFG.memoriesGid, "data/sample-memories.csv")).catch(err => { console.warn(err); return []; }),
       // Recipes typed up from the family's paper copies live in the repo, alongside form submissions.
       usingSample ? [] : fetchCSV("data/family-recipes.csv").catch(err => { console.warn(err); return []; }),
+      loadComments(),
     ]);
 
     if (sheetErr && !familyRows.length) throw sheetErr;
@@ -172,6 +173,122 @@
     }
   }
 
+  // ── Comments & photos (Apps Script web app, see google/comments-backend.gs) ──
+  async function loadComments() {
+    if (!CFG.commentsApiUrl) return;
+    try {
+      const res = await fetch(CFG.commentsApiUrl, { cache: "no-store" });
+      const data = await res.json();
+      state.comments = (data.comments || []).map(prepComment);
+    } catch (err) {
+      console.warn("Comments couldn't be loaded", err);
+    }
+  }
+
+  function prepComment(c) {
+    return { ...c, ts: +c.ts || 0, photos: photoUrls((c.photos || []).join(" ")) };
+  }
+
+  const commentsFor = r => state.comments.filter(c => c.recipeId === r.slug).sort((a, b) => a.ts - b.ts);
+  const allPhotos = r => [...r.photos, ...commentsFor(r).flatMap(c => c.photos)];
+
+  // Shrink photos in the browser before upload: phone pictures are huge, and this keeps uploads fast.
+  function shrinkImage(file, maxSide = 1800, quality = 0.85) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.naturalWidth * scale);
+        canvas.height = Math.round(img.naturalHeight * scale);
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        resolve({ type: "image/jpeg", data: canvas.toDataURL("image/jpeg", quality).split(",")[1] });
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(`Couldn't read ${file.name}. Try a JPEG or PNG.`)); };
+      img.src = url;
+    });
+  }
+
+  function commentHTML(c) {
+    const when = c.ts ? new Date(c.ts).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
+    return `<article class="comment">
+      <div class="comment-head"><strong>${esc(c.name || "Someone")}</strong>${when ? `<span>${esc(when)}</span>` : ""}</div>
+      ${c.text ? `<div class="comment-text">${paragraphs(c.text)}</div>` : ""}
+      ${c.photos.length ? `<div class="comment-photos">${c.photos.map(p =>
+        `<a href="${esc(p)}" target="_blank" rel="noopener"><img src="${esc(p)}" alt="Photo from ${esc(c.name)}" loading="lazy" referrerpolicy="no-referrer"></a>`).join("")}</div>` : ""}
+    </article>`;
+  }
+
+  function savedName() { try { return localStorage.getItem("commenterName") || ""; } catch (e) { return ""; } }
+  function saveName(n) { try { localStorage.setItem("commenterName", n); } catch (e) { /* private mode */ } }
+
+  function commentsSection(r) {
+    if (!CFG.commentsApiUrl) return "";
+    const list = commentsFor(r);
+    return `
+      <section class="comments" id="comments">
+        <h2 class="section-title">Comments &amp; photos</h2>
+        <div class="comment-list">${list.length ? list.map(commentHTML).join("") : `<p class="muted">No comments yet. Made this one? Tell us how it went, or add a photo.</p>`}</div>
+        <form class="panel comment-form" novalidate>
+          <h3>Add a comment or photos</h3>
+          <label>Your name<input name="name" required maxlength="100" autocomplete="name" value="${esc(savedName())}"></label>
+          <label><span>Comment <span class="muted">(optional if you're adding photos)</span></span><textarea name="text" rows="3" maxlength="4000" placeholder="Made this for Sunday dinner…"></textarea></label>
+          <label class="photo-pick">📷 Add photos<input name="photos" type="file" accept="image/*" multiple></label>
+          <div class="previews"></div>
+          <input name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+          <div class="form-row"><button class="btn" type="submit">Post</button><span class="status" role="status"></span></div>
+        </form>
+      </section>`;
+  }
+
+  function wireCommentForm(r) {
+    const form = app.querySelector(".comment-form");
+    if (!form) return;
+    const MAX = 6;
+    let files = [];
+    const previews = form.querySelector(".previews");
+    const status = form.querySelector(".status");
+    const showPreviews = () => {
+      previews.innerHTML = files.map((f, i) =>
+        `<div class="preview"><img src="${URL.createObjectURL(f)}" alt=""><button type="button" data-i="${i}" aria-label="Remove photo">×</button></div>`).join("");
+      previews.querySelectorAll("button").forEach(b => b.addEventListener("click", () => { files.splice(+b.dataset.i, 1); showPreviews(); }));
+    };
+    form.photos.addEventListener("change", () => {
+      files = [...files, ...form.photos.files].filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|gif|webp|heic)$/i.test(f.name)).slice(0, MAX);
+      form.photos.value = "";
+      showPreviews();
+    });
+    form.addEventListener("submit", async e => {
+      e.preventDefault();
+      const name = form.name.value.trim(), text = form.text.value.trim();
+      if (!name) { status.textContent = "Please add your name."; form.name.focus(); return; }
+      if (!text && !files.length) { status.textContent = "Add a comment or a photo."; return; }
+      const btn = form.querySelector("button[type=submit]");
+      btn.disabled = true;
+      status.textContent = files.length ? "Uploading photos…" : "Posting…";
+      try {
+        const photos = await Promise.all(files.map(f => shrinkImage(f)));
+        const res = await fetch(CFG.commentsApiUrl, {
+          method: "POST",
+          body: JSON.stringify({ recipeId: r.slug, recipe: r.title, name, text, photos, website: form.website.value }),
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Something went wrong.");
+        saveName(name);
+        if (data.comment) state.comments.push(prepComment(data.comment));
+        renderRecipe(r.slug, { keepScroll: true });
+        const s = app.querySelector(".comment-form .status");
+        if (s) s.textContent = "Thanks! It's posted.";
+      } catch (err) {
+        console.error(err);
+        status.textContent = `Sorry, that didn't post: ${err.message}`;
+        btn.disabled = false;
+      }
+    });
+  }
+
   function showNotice(text) {
     const n = document.getElementById("notice");
     n.textContent = text;
@@ -180,7 +297,8 @@
 
   // ── Views ───────────────────────────────────────────────────
   function cardImage(item, label) {
-    if (item.photos && item.photos[0]) return `<img src="${esc(item.photos[0])}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
+    const photo = item.slug ? allPhotos(item)[0] : item.photos && item.photos[0];
+    if (photo) return `<img src="${esc(photo)}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
     return `<div class="placeholder" style="background:${colorFor(item.category || label)}">${esc((label || "?").charAt(0).toUpperCase())}</div>`;
   }
 
@@ -255,7 +373,7 @@
       : `<p class="empty">${state.recipes.length ? "No recipes match that search." : "No recipes yet. Be the first to add one!"}</p>`;
   }
 
-  function renderRecipe(slug) {
+  function renderRecipe(slug, { keepScroll = false } = {}) {
     const r = state.recipes.find(x => x.slug === slug);
     if (!r) { app.innerHTML = `<p class="empty">We couldn't find that recipe. <a href="#/">Back to all recipes</a></p>`; return; }
     document.title = `${r.title} · ${CFG.siteTitle || "Family Recipes"}`;
@@ -297,10 +415,13 @@
       </div>
       <div class="recipe-actions">
         <button class="btn btn-ghost" onclick="window.print()">🖨 Print recipe</button>
+        ${CFG.commentsApiUrl ? `<a class="btn btn-ghost" href="#comments" onclick="document.getElementById('comments').scrollIntoView({behavior:'smooth'});return false;">💬 Comments &amp; photos${commentsFor(r).length ? ` (${commentsFor(r).length})` : ""}</a>` : ""}
         ${shareLink ? `<a class="btn btn-ghost" href="${esc(shareLink)}" target="_blank" rel="noopener">Share a memory about this recipe</a>` : ""}
       </div>
-      ${mems.length ? `<h2 class="section-title">Memories</h2><div class="memories card-memories">${mems.map(m => memoryCard(m, { showRecipe: false })).join("")}</div>` : ""}`;
-    window.scrollTo(0, 0);
+      ${mems.length ? `<h2 class="section-title">Memories</h2><div class="memories card-memories">${mems.map(m => memoryCard(m, { showRecipe: false })).join("")}</div>` : ""}
+      ${commentsSection(r)}`;
+    wireCommentForm(r);
+    if (!keepScroll) window.scrollTo(0, 0);
   }
 
   function renderMemories() {

@@ -22,4 +22,8 @@ window.SITE_CONFIG = {
   // Optional: lets "Share a memory about this recipe" pre-fill the recipe name.
   // Looks like "entry.123456789". The setup script prints it.
   memoryFormRecipeEntry: "entry.1612679184",
+
+  // Web app URL (ends in /exec) from deploying google/comments-backend.gs.
+  // Turns on "Comments & photos" under every recipe. Leave empty to hide it.
+  commentsApiUrl: "",
 };

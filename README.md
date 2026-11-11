@@ -98,6 +98,27 @@ memoryFormRecipeEntry: "entry.1234567890",
 - Put **each step on its own line**. Numbers are optional; the site numbers them for you.
 - Recipes can be printed cleanly with the **🖨 Print recipe** button.
 
+## Comments & photos
+
+Every recipe page can have a **Comments & photos** section where anyone can leave a comment and add
+photos (up to 6 at a time) with no Google sign-in. It's powered by a small Google Apps Script that
+saves comments in a `Comments` tab of your responses sheet and photos in a shared Drive folder.
+
+One-time setup:
+
+1. Open the **Merchen Family Recipes (responses)** sheet → **Extensions → Apps Script**.
+2. Click **＋ → Script**, name it `comments`, paste in all of
+   [`google/comments-backend.gs`](google/comments-backend.gs), and save.
+3. In the toolbar pick `setupComments` and click **▶ Run**. Approve the permissions (Google will warn
+   that the app isn't verified; click *Advanced → Go to … (unsafe)*, which is normal for your own script).
+4. Click **Deploy → New deployment** → gear icon → **Web app**. Set *Execute as* **Me** and
+   *Who has access* **Anyone**, then **Deploy**.
+5. Copy the **Web app URL** (ends in `/exec`) into `commentsApiUrl` in `config.js`.
+
+New comments show up immediately. To hide one, type `yes` in its **Hide** column in the `Comments` tab.
+If you ever change the script, use **Deploy → Manage deployments → ✏️ → Version: New version** so the
+URL stays the same.
+
 ## Previewing locally
 
 Any static file server works, for example:
