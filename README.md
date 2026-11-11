@@ -126,6 +126,19 @@ photos in a shared Drive folder. Recipes and memories sent through the Google Fo
 **Hiding something:** type `yes` in its **Hide** column (in whichever tab it's in). It disappears right away.
 For a cover photo, hiding the row puts the previous cover back.
 
+## Gallery search
+
+The Gallery has a search box. It matches in two ways:
+
+- **Words and themes (instant):** exact words in a memory's title, date, story, people or recipe, plus
+  built-in themes, so *holidays* finds Christmas, Easter, Halloween, Thanksgiving, Fourth of July and so on,
+  and *summer* finds June, July and August. Edit the `THEMES` list in `assets/search.js` to add more.
+- **Meaning (loads on first search):** a small AI model (all-MiniLM-L6-v2) that runs entirely in the
+  visitor's browser, with no API key or server. It finds memories that are *about* the search even when the
+  words differ (*cold weather* finds "Snowed in"). The first search on each device downloads about 25 MB
+  from Hugging Face and jsDelivr; after that the browser keeps it. If it can't load, search still works on
+  words and themes.
+
 ## Previewing locally
 
 Any static file server works, for example:

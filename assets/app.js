@@ -4,7 +4,7 @@
 
   const CFG = window.SITE_CONFIG || {};
   const app = document.getElementById("app");
-  const state = { recipes: [], memories: [], comments: [], covers: [], seen: {}, apiVersion: 0, query: "", category: "All", sort: "newest" };
+  const state = { recipes: [], memories: [], comments: [], covers: [], seen: {}, apiVersion: 0, galleryQuery: "", query: "", category: "All", sort: "newest" };
 
   // ── Column matching ─────────────────────────────────────────
   // Each field is matched to the first unused sheet column whose header contains one of the keywords,
@@ -668,22 +668,101 @@
       </div>`;
   }
 
-  // ── Photo gallery (slideshow of memory photos) ──────────────
+  // ── Photo gallery (slideshow of memory photos, with search) ─
   const SLIDE_MS = 6000;
+  const GALLERY_SUGGESTIONS = ["Holidays", "Summer", "Winter", "Birthdays", "Desserts"];
   let galleryCleanup = null;
 
   const gallerySlides = () => state.memories.flatMap(m => m.photos.map(src => ({ src, m })));
 
   function renderGallery(startArg) {
-    const slides = gallerySlides();
-    if (!slides.length) {
+    const all = gallerySlides();
+    if (!all.length) {
       app.innerHTML = `
         <section class="hero"><h1>Gallery</h1><p>Photos from the family's memories will show up here as a slideshow.</p>
           <div class="hero-actions">${addLink("memory", "Share a memory with a photo")}</div></section>`;
       return;
     }
-    let i = Math.min(Math.max(parseInt(startArg, 10) || 0, 0), slides.length - 1);
-    let playing = !/^\d+$/.test(startArg || "");  // opened from a specific photo: start paused on it
+    const withPhotos = state.memories.filter(m => m.photos.length);
+    const q0 = state.galleryQuery || "";
+    app.innerHTML = `
+      <section class="hero hero-tight"><h1>Gallery</h1><p>Photos from the family's memories.</p></section>
+      <div class="g-search">
+        <input class="search" type="search" placeholder="Search photos: holidays, Grandma, summer, 2019…" aria-label="Search photos" value="${esc(q0)}">
+        <div class="chips g-suggest">${GALLERY_SUGGESTIONS.map(s => `<button class="chip" type="button" aria-pressed="${norm(s) === norm(q0)}">${esc(s)}</button>`).join("")}</div>
+        <p class="g-status muted" role="status"></p>
+      </div>
+      <div class="g-show"></div>`;
+    const input = app.querySelector(".g-search input");
+    const statusEl = app.querySelector(".g-status");
+    const showEl = app.querySelector(".g-show");
+    let stopShow = null, seq = 0, debounce = null;
+
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    function showFor(memories, start, autoplay) {
+      const order = new Map(memories.map((m, k) => [m, k]));
+      const slides = all.filter(s => order.has(s.m)).sort((a, b) => order.get(a.m) - order.get(b.m));
+      if (stopShow) { stopShow(); stopShow = null; }
+      if (!slides.length) { showEl.innerHTML = ""; return 0; }
+      stopShow = buildSlideshow(showEl, slides, start, autoplay, !norm(input.value));
+      return slides.length;
+    }
+
+    async function runSearch(q, { start = 0, autoplay = true } = {}) {
+      const my = ++seq;
+      state.galleryQuery = q;
+      app.querySelectorAll(".g-suggest .chip").forEach(c => c.setAttribute("aria-pressed", String(norm(c.textContent) === norm(q))));
+      if (!norm(q)) { statusEl.textContent = ""; showFor(withPhotos, start, autoplay); return; }
+      const S = window.MemorySearch;
+      const report = (res, extra = "") => {
+        const n = showFor(res.matches, 0, true);
+        if (!n) {
+          showEl.innerHTML = `<p class="empty">No photos match “${esc(q)}” yet. <button class="btn btn-ghost btn-small g-clear" type="button">Show all photos</button></p>`;
+          showEl.querySelector(".g-clear").addEventListener("click", () => { input.value = ""; runSearch(""); });
+        }
+        statusEl.textContent = !n ? extra
+          : res.closest ? `No exact matches for “${q}”. Showing the closest ${plural(n, "photo", "photos")}.`
+          : `${plural(n, "photo", "photos")} from ${plural(res.matches.length, "memory", "memories")} matching “${q}”.${extra ? " " + extra : ""}`;
+      };
+      if (!S) { report({ matches: withPhotos.filter(m => norm(memoryWords(m)).includes(norm(q))) }); return; }
+      const quick = await S.search(withPhotos, q, { keywordOnly: true });
+      if (my !== seq) return;
+      report(quick, "Looking for more by meaning…");
+      if (/^[0-9' ]+$/.test(norm(q))) { report(quick); return; }
+      try {
+        const smart = await S.search(withPhotos, q);
+        if (my !== seq) return;
+        report(smart);
+      } catch (err) {
+        console.warn("Smart search unavailable", err);
+        if (my !== seq) return;
+        report(quick, "(Smart search couldn't load, so this matches exact words only.)");
+      }
+    }
+
+    input.addEventListener("input", () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => runSearch(input.value), 350);
+    });
+    input.addEventListener("focus", () => { if (window.MemorySearch) window.MemorySearch.loadModel().catch(() => {}); }, { once: true });
+    app.querySelectorAll(".g-suggest .chip").forEach(c => c.addEventListener("click", () => {
+      const on = c.getAttribute("aria-pressed") === "true";
+      input.value = on ? "" : c.textContent;
+      runSearch(input.value);
+    }));
+
+    galleryCleanup = () => { seq++; clearTimeout(debounce); if (stopShow) stopShow(); };
+    const fromPhoto = /^\d+$/.test(startArg || "");
+    if (fromPhoto) { input.value = ""; state.galleryQuery = ""; }
+    runSearch(input.value, { start: fromPhoto ? +startArg : 0, autoplay: !fromPhoto });
+  }
+
+  const memoryWords = m => [m.title, m.when, m.text, m.people, m.recipe, m.by].filter(Boolean).join(" ");
+
+  // Builds the slideshow inside `host`. Returns a function that stops it.
+  function buildSlideshow(host, slides, start, autoplay, trackUrl) {
+    let i = Math.min(Math.max(start || 0, 0), slides.length - 1);
+    let playing = autoplay;
     let timer = null;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -697,8 +776,7 @@
         ${m.linked ? `<a href="#/recipe/${esc(m.linked.slug)}">🍽 ${esc(m.linked.title)} →</a>` : ""}`;
     };
 
-    app.innerHTML = `
-      <section class="hero hero-tight"><h1>Gallery</h1><p>Photos from the family's memories.</p></section>
+    host.innerHTML = `
       <div class="gallery" tabindex="0" aria-roledescription="slideshow" aria-label="Memory photos">
         <div class="g-stage">
           ${slides.map((s, k) => `
@@ -720,7 +798,7 @@
           `<button class="g-thumb" type="button" data-k="${k}" aria-label="Photo ${k + 1}"><img data-src="${esc(s.src)}" alt="" referrerpolicy="no-referrer"></button>`).join("")}</div>
       </div>`;
 
-    const root = app.querySelector(".gallery");
+    const root = host.querySelector(".gallery");
     const figs = [...root.querySelectorAll(".g-slide")];
     const thumbs = [...root.querySelectorAll(".g-thumb")];
     const strip = root.querySelector(".g-thumbs");
@@ -745,7 +823,7 @@
       cap.innerHTML = caption(slides[i]);
       cap.classList.add("in");
       root.querySelector(".g-count").textContent = `${i + 1} / ${slides.length}`;
-      history.replaceState(null, "", `#/gallery/${i}`);
+      history.replaceState(null, "", trackUrl ? `#/gallery/${i}` : "#/gallery");
       restartTimer();
     }
 
@@ -770,6 +848,7 @@
 
     root.querySelector(".g-prev").addEventListener("click", () => show(i - 1));
     root.querySelector(".g-next").addEventListener("click", () => show(i + 1));
+    root.querySelectorAll(".g-nav").forEach(b => { b.hidden = slides.length < 2; });
     playBtn.addEventListener("click", () => setPlaying(!playing));
     thumbs.forEach(t => t.addEventListener("click", () => show(+t.dataset.k)));
     thumbs.forEach(t => load(t.querySelector("img")));
@@ -802,15 +881,15 @@
     const onVis = () => { if (document.hidden) clearTimeout(timer); else restartTimer(); };
     document.addEventListener("keydown", onKey);
     document.addEventListener("visibilitychange", onVis);
-    galleryCleanup = () => {
+
+    setPlaying(playing);
+    show(i);
+    return () => {
       clearTimeout(timer);
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("visibilitychange", onVis);
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     };
-
-    setPlaying(playing);
-    show(i);
   }
 
   // ── Router ──────────────────────────────────────────────────
