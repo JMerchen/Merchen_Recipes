@@ -4,7 +4,7 @@
 
   const CFG = window.SITE_CONFIG || {};
   const app = document.getElementById("app");
-  const state = { recipes: [], memories: [], comments: [], covers: [], seen: {}, apiVersion: 0, galleryQuery: "", query: "", category: "All", sort: "newest" };
+  const state = { recipes: [], memories: [], comments: [], covers: [], tagEdits: [], seen: {}, apiVersion: 0, galleryQuery: "", query: "", category: "All", sort: "newest" };
 
   // ── Column matching ─────────────────────────────────────────
   // Each field is matched to the first unused sheet column whose header contains one of the keywords,
@@ -148,6 +148,7 @@
     state.apiVersion = site.version;
     state.comments = site.comments.map(prepItem);
     state.covers = site.covers.map(prepItem);
+    state.tagEdits = site.tags.map(prepItem);
 
     if (sheetErr && !familyRows.length) throw sheetErr;
     if (sheetErr) console.warn(sheetErr);
@@ -156,6 +157,11 @@
       .filter(r => r.title && !isHidden(r.hide))
       .concat(site.recipes.map(prepItem).filter(r => r.title))
       .map(makeRecipe);
+    // Tag changes made on the site: the latest one for each recipe wins.
+    for (const e of [...state.tagEdits].sort((a, b) => a.ts - b.ts)) {
+      const r = state.recipes.find(x => x.slug === e.recipeId);
+      if (r) setTags(r, parseTags(e.tags));
+    }
 
     state.memories = toObjects(mRows, MEMORY_FIELDS)
       .filter(m => m.text && !isHidden(m.hide))
@@ -169,12 +175,12 @@
   // Version 1 of the script only handled comments. Version 2 adds recipes, memories and cover photos;
   // until it's deployed, "add a recipe/memory" falls back to the Google Forms.
   async function loadSite() {
-    const empty = { version: 0, comments: [], recipes: [], memories: [], covers: [] };
+    const empty = { version: 0, comments: [], recipes: [], memories: [], covers: [], tags: [] };
     if (!CFG.commentsApiUrl) return empty;
     try {
       const res = await fetch(CFG.commentsApiUrl, { cache: "no-store" });
       const d = await res.json();
-      return { version: d.version || 1, comments: d.comments || [], recipes: d.recipes || [], memories: d.memories || [], covers: d.covers || [] };
+      return { version: d.version || 1, comments: d.comments || [], recipes: d.recipes || [], memories: d.memories || [], covers: d.covers || [], tags: d.tags || [] };
     } catch (err) {
       console.warn("Site data couldn't be loaded", err);
       return empty;
@@ -188,7 +194,7 @@
   }
 
   async function postApi(payload) {
-    const res = await fetch(CFG.commentsApiUrl, { method: "POST", body: JSON.stringify(payload) });
+    const res = await fetch(CFG.commentsApiUrl, { method: "POST", body: JSON.stringify({ ...payload, code: storedCode() }) });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || "Something went wrong.");
     const item = data.item || data.comment;
@@ -263,6 +269,7 @@
       e.preventDefault();
       const name = form.elements.name.value.trim();
       if (!name) { status.textContent = "Please add your name."; form.elements.name.focus(); return; }
+      if (!(await contributorCheck())) return;
       btn.disabled = true;
       try {
         const chosen = files();
@@ -340,7 +347,7 @@
       <div class="cover${cover ? "" : " cover-empty"}">
         ${cover
           ? `<img src="${esc(cover)}" alt="${esc(r.title)}" referrerpolicy="no-referrer">`
-          : `<div class="placeholder" style="background:${colorFor(r.category || r.title)}"></div>`}
+          : `<div class="placeholder" style="background:${colorFor(r.tags[0] || r.title)}"></div>`}
         ${canPost() ? `<button class="btn btn-small cover-btn" type="button" aria-expanded="false">${cover ? "📷 Change cover photo" : "＋ Add a cover photo"}</button>` : ""}
       </div>
       ${canPost() ? `
@@ -366,7 +373,7 @@
       toggle.setAttribute("aria-expanded", String(open));
       if (open) form.scrollIntoView({ behavior: "smooth", block: "nearest" });
     };
-    toggle.addEventListener("click", () => setOpen(form.hidden));
+    toggle.addEventListener("click", async () => { if (form.hidden && !(await contributorCheck())) return; setOpen(form.hidden); });
     form.querySelector(".cover-cancel").addEventListener("click", () => setOpen(false));
 
     let existing = "";
@@ -392,12 +399,116 @@
     });
   }
 
+  // ── Tags ────────────────────────────────────────────────────
+  // A recipe's "Category" can hold several tags separated by commas (Google Forms checkboxes save them that way).
+  function parseTags(s) {
+    const known = new Map(CATEGORIES.map(c => [c.toLowerCase(), c]));
+    const seen = new Set(), out = [];
+    for (const raw of String(s || "").split(/[,;\n]+/)) {
+      const t = raw.trim().replace(/\s+/g, " ").slice(0, 40);
+      if (!t || seen.has(t.toLowerCase())) continue;
+      seen.add(t.toLowerCase());
+      out.push(known.get(t.toLowerCase()) || t.charAt(0).toUpperCase() + t.slice(1));
+    }
+    const tags = out.length > 1 ? out.filter(t => t !== "Other") : out;
+    return tags.length ? tags : ["Other"];
+  }
+  function setTags(r, tags) { r.tags = tags; r.category = tags.join(", "); }
+  const allTags = () => [...new Set(state.recipes.flatMap(r => r.tags))]
+    .sort((a, b) => (a === "Other") - (b === "Other") || a.localeCompare(b));
+
+  // Checkbox chips for the known tags (plus any already in use) and a box for new ones.
+  function tagPicker(selected = []) {
+    const options = [...new Set([...CATEGORIES.filter(c => c !== "Other"), ...allTags().filter(t => t !== "Other"), ...selected.filter(t => t !== "Other")])];
+    return `<div class="tag-picker">
+      <div class="chips">${options.map(t => `<label class="chip-check"><input type="checkbox" name="tag" value="${esc(t)}"${selected.includes(t) ? " checked" : ""}><span>${esc(t)}</span></label>`).join("")}</div>
+      <input name="newtags" maxlength="200" placeholder="Add your own, separated by commas (e.g. Christmas, Grandma's)">
+    </div>`;
+  }
+  const readTags = form => parseTags([...form.querySelectorAll("input[name=tag]:checked")].map(c => c.value).concat(form.elements.newtags.value).join(","));
+
+  function tagsSection(r) {
+    const links = r.tags.map(t => `<a class="tag tag-link" href="#/tag/${encodeURIComponent(t)}">${esc(t)}</a>`).join("");
+    if (!(state.apiVersion >= 3)) return `<div class="tag-row">${links}</div>`;
+    return `<div class="tag-row">${links}<button class="tag-edit" type="button" aria-expanded="false">✎ Edit tags</button></div>`;
+  }
+
+  function tagsForm(r) {
+    if (!(state.apiVersion >= 3)) return "";
+    return `
+      <form class="panel site-form tags-form" novalidate hidden>
+        <h3>Tags for ${esc(r.title)}</h3>
+        <p class="muted">Pick every tag that fits. A recipe can be in as many as you like.</p>
+        ${tagPicker(r.tags)}
+        ${nameField()}
+        ${submitRow("Save tags", `<button class="btn btn-ghost tags-cancel" type="button">Cancel</button>`)}
+      </form>`;
+  }
+
+  function wireTags(r) {
+    const form = app.querySelector(".tags-form");
+    if (!form) return;
+    const toggle = app.querySelector(".tag-edit");
+    const setOpen = open => { form.hidden = !open; toggle.setAttribute("aria-expanded", String(open)); };
+    toggle.addEventListener("click", async () => { if (form.hidden && !(await contributorCheck())) return; setOpen(form.hidden); });
+    form.querySelector(".tags-cancel").addEventListener("click", () => setOpen(false));
+    wireForm(form, {
+      build: () => ({ action: "tags", recipeId: r.slug, recipe: r.title, tags: readTags(form).join(", ") }),
+      done: item => {
+        if (item) state.tagEdits.push(item);
+        setTags(r, parseTags(item ? item.tags : readTags(form).join(",")));
+        renderRecipe(r.slug, { keepScroll: true });
+      },
+    });
+  }
+
+  // ── Contributor check ───────────────────────────────────────
+  // Anyone adding or changing something answers a question once per browser session.
+  // (A light speed bump for strangers and bots, not real security: the answer is in this site's public code.)
+  const CODE_KEY = "contributorCode";
+  const storedCode = () => { try { return sessionStorage.getItem(CODE_KEY) || ""; } catch (e) { return ""; } };
+  const codeOk = () => !CFG.contributorCode || storedCode() === String(CFG.contributorCode);
+
+  function contributorCheck() {
+    if (codeOk()) return Promise.resolve(true);
+    return new Promise(resolve => {
+      const dlg = document.createElement("dialog");
+      dlg.className = "gate";
+      dlg.innerHTML = `
+        <form method="dialog" class="site-form" novalidate>
+          <h3>Just checking</h3>
+          <p>${esc(CFG.contributorQuestion || "What's the family number?")}</p>
+          <input name="answer" inputmode="numeric" autocomplete="off" aria-label="Answer" required>
+          <p class="gate-error" role="alert"></p>
+          <div class="form-row"><button class="btn" value="ok">Continue</button><button class="btn btn-ghost" value="cancel" formnovalidate>Cancel</button></div>
+        </form>`;
+      document.body.appendChild(dlg);
+      const form = dlg.querySelector("form"), input = form.elements.answer, err = dlg.querySelector(".gate-error");
+      let done = false;
+      const finish = ok => { if (done) return; done = true; dlg.close(); dlg.remove(); resolve(ok); };
+      form.addEventListener("submit", e => {
+        e.preventDefault();
+        if (e.submitter && e.submitter.value === "cancel") return finish(false);
+        if (input.value.trim() === String(CFG.contributorCode)) {
+          try { sessionStorage.setItem(CODE_KEY, input.value.trim()); } catch (x) { /* private mode: asks again next time */ }
+          return finish(true);
+        }
+        err.textContent = "That's not it. Try again?";
+        input.select();
+      });
+      dlg.addEventListener("cancel", () => finish(false));
+      dlg.showModal();
+      input.focus();
+    });
+  }
+
   // ── Recipe and memory objects ───────────────────────────────
   function makeRecipe(r) {
     let slug = slugify(r.title);
     state.seen[slug] = (state.seen[slug] || 0) + 1;
     if (state.seen[slug] > 1) slug += "-" + state.seen[slug];
-    return { ...r, slug, ts: r.ts || parseDate(r.timestamp), category: r.category || "Other", photos: r.photos || photoUrls(r.photo) };
+    const tags = parseTags(r.category);
+    return { ...r, slug, ts: r.ts || parseDate(r.timestamp), tags, category: tags.join(", "), photos: r.photos || photoUrls(r.photo) };
   }
 
   function linkMemory(m) {
@@ -419,7 +530,6 @@
 
   function renderAddRecipe() {
     if (!canPost()) { location.hash = "#/share"; return; }
-    const cats = [...new Set([...CATEGORIES, ...state.recipes.map(r => r.category)])];
     app.innerHTML = `
       <a class="back" href="#/">← All recipes</a>
       <section class="hero hero-left"><h1>Add a recipe</h1><p>A family favorite, a holiday tradition, or the dish everyone asks you to bring.</p></section>
@@ -429,7 +539,7 @@
           ${nameField()}
           ${field("Whose recipe is it originally?", `<input name="origin" maxlength="200" placeholder="Grandma Ruth, Uncle Joe, or &quot;mine!&quot;">`)}
         </div>
-        ${field("Category", `<select name="category">${cats.map(c => `<option${c === "Other" ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>`)}
+        <div><span class="label">Tags <span class="muted">(pick as many as fit)</span></span>${tagPicker()}</div>
         ${field("The story behind it", `<textarea name="story" rows="3" placeholder="Where did it come from? When do you make it?"></textarea>`, "(optional)")}
         ${field("Ingredients", `<textarea name="ingredients" rows="8" required placeholder="2 cups flour&#10;1 tsp. salt&#10;For the frosting:&#10;1 cup powdered sugar"></textarea>`, "(one per line; end a line with a colon to make a heading)")}
         ${field("Instructions", `<textarea name="instructions" rows="8" required placeholder="Preheat oven to 350°.&#10;Mix the dry ingredients."></textarea>`, "(one step per line)")}
@@ -450,7 +560,7 @@
         if (!v("title")) throw friendly("Please add the recipe name.");
         if (!v("ingredients")) throw friendly("Please add the ingredients.");
         if (!v("instructions")) throw friendly("Please add the instructions.");
-        return { action: "recipe", photos, ...Object.fromEntries(["title", "origin", "category", "story", "ingredients", "instructions", "servings", "time", "notes"].map(k => [k, v(k)])) };
+        return { action: "recipe", photos, category: readTags(form).join(", "), ...Object.fromEntries(["title", "origin", "story", "ingredients", "instructions", "servings", "time", "notes"].map(k => [k, v(k)])) };
       },
       done: item => {
         const r = makeRecipe(item);
@@ -518,7 +628,7 @@
     return `<a class="card" href="#/recipe/${esc(r.slug)}">
       <div class="card-img">${cardImage(r, r.title)}</div>
       <div class="card-body">
-        <div class="tag">${esc(r.category)}</div>
+        <div class="tag">${esc(r.tags.join(" · "))}</div>
         <h3>${esc(r.title)}</h3>
         ${who ? `<div class="meta">${esc(who)}</div>` : ""}
       </div></a>`;
@@ -541,7 +651,8 @@
   }
 
   function renderHome() {
-    const cats = ["All", ...Array.from(new Set(state.recipes.map(r => r.category))).sort()];
+    if (state.category !== "All" && !allTags().includes(state.category)) state.category = "All";
+    const cats = ["All", ...allTags()];
     app.innerHTML = `
       <section class="hero${CFG.familyPhoto ? " hero-photo" : ""}">
         ${CFG.familyPhoto
@@ -582,7 +693,7 @@
   function renderResults() {
     const q = norm(state.query);
     let list = state.recipes.filter(r =>
-      (state.category === "All" || r.category === state.category) &&
+      (state.category === "All" || r.tags.includes(state.category)) &&
       (!q || norm([r.title, r.origin, r.by, r.category, r.ingredients, r.story].join(" ")).includes(q)));
     list = list.slice().sort(state.sort === "az" ? (a, b) => a.title.localeCompare(b.title) : (a, b) => b.ts - a.ts);
     const el = document.getElementById("results");
@@ -620,9 +731,10 @@
     app.innerHTML = `
       <a class="back" href="#/">← All recipes</a>
       <div class="recipe-head">
-        <div class="tag">${esc(r.category)}</div>
+        ${tagsSection(r)}
         <h1>${esc(r.title)}</h1>
         <div class="facts">${facts}</div>
+        ${tagsForm(r)}
       </div>
       ${coverSection(r)}
       ${gallery.length ? `<div class="photos">${gallery.map(p => `<img src="${esc(p)}" alt="${esc(r.title)}" referrerpolicy="no-referrer">`).join("")}</div>` : ""}
@@ -642,6 +754,7 @@
       ${commentsSection(r)}`;
     wireCommentForm(r);
     wireCover(r);
+    wireTags(r);
     if (!keepScroll) window.scrollTo(0, 0);
   }
 
@@ -912,6 +1025,23 @@
       : page === "gallery" ? "gallery"
       : page === "share" || page === "add-recipe" ? "" : "recipes";
     document.querySelectorAll("[data-nav]").forEach(a => a.classList.toggle("active", a.dataset.nav === section));
+    if (page === "tag") {
+      state.category = decodeURIComponent(arg || "All");
+      state.query = "";
+      history.replaceState(null, "", "#/");
+      renderHome();
+      window.scrollTo(0, 0);
+      return;
+    }
+    if ((page === "add-recipe" || page === "add-memory") && canPost() && !codeOk()) {
+      app.innerHTML = `<p class="loading">One moment…</p>`;
+      contributorCheck().then(ok => {
+        if (ok) route();
+        else if (history.length > 1) history.back();
+        else location.hash = "#/";
+      });
+      return;
+    }
     if (page === "recipe") renderRecipe(decodeURIComponent(arg || ""));
     else if (page === "memories") renderMemories();
     else if (page === "share") renderShare();

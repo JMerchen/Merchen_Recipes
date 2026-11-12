@@ -1,10 +1,13 @@
 /**
- * Merchen Family Recipes — site backend (version 2).
+ * Merchen Family Recipes — site backend (version 3).
  *
  * Lets anyone, with no Google sign-in:
  *   • leave a comment and/or add photos on a recipe
  *   • add a new recipe or memory straight from the site
  *   • add or change a recipe's cover photo
+ *   • change a recipe's tags
+ *
+ * Every submission must include the contributor number the site asks for (ACCESS_CODE below).
  *
  * Everything is saved in tabs of the responses spreadsheet ("Comments", "Site Recipes",
  * "Site Memories", "Covers"); photos go into a Drive folder shared as "anyone with the link can view".
@@ -19,7 +22,10 @@
  *   5. The Web app URL (ends in /exec) goes in commentsApiUrl in config.js.
  */
 
-const VERSION = 2;
+const VERSION = 3;
+// The number the site asks contributors for. Keep it the same as contributorCode in config.js.
+// Set to '' to turn the check off.
+const ACCESS_CODE = '13';
 const PHOTO_FOLDER_NAME = 'Merchen Family Recipes – Comment Photos';
 const MAX_PHOTOS = 6;
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
@@ -53,6 +59,12 @@ const TABS = {
       people: r['Who is in it'], text: r['Memory'], when: r['When'],
     }),
   },
+  tags: {
+    name: 'Tags',
+    headers: ['Timestamp', 'Recipe ID', 'Recipe', 'Name', 'Tags', 'Hide'],
+    key: 'Recipe ID',
+    toJSON: r => ({ recipeId: r['Recipe ID'], recipe: r['Recipe'], name: r['Name'], tags: r['Tags'] }),
+  },
   covers: {
     name: 'Covers',
     headers: ['Timestamp', 'Recipe ID', 'Recipe', 'Name', 'Photos', 'Hide'],
@@ -76,11 +88,12 @@ function doGet() {
   return json_(out);
 }
 
-/** POST (sent as text/plain JSON). body.action: "comment" (default), "recipe", "memory" or "cover". */
+/** POST (sent as text/plain JSON). body.action: "comment" (default), "recipe", "memory", "cover" or "tags". */
 function doPost(e) {
   try {
     const b = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     if (b.website) return json_({ ok: true }); // honeypot field that only bots fill in
+    if (ACCESS_CODE && String(b.code || '').trim() !== ACCESS_CODE) throw new Error('Please enter the family number first.');
     const action = b.action || 'comment';
     const name = clean_(b.name, 100);
     if (!name) throw new Error('Please add your name.');
@@ -98,7 +111,7 @@ function doPost(e) {
         const title = req_(b.title, 'recipe name', 200);
         const row = {
           'Recipe name': title, 'Your name': name, 'Whose recipe': clean_(b.origin, 200),
-          'Category': clean_(b.category, 60) || 'Other', 'Story': clean_(b.story, MAX_TEXT),
+          'Category': clean_(b.category, 300) || 'Other', 'Story': clean_(b.story, MAX_TEXT),
           'Ingredients': req_(b.ingredients, 'ingredients', MAX_TEXT), 'Instructions': req_(b.instructions, 'instructions', MAX_TEXT),
           'Servings': clean_(b.servings, 100), 'Time': clean_(b.time, 100), 'Notes': clean_(b.notes, MAX_TEXT),
         };
@@ -113,6 +126,11 @@ function doPost(e) {
         };
         row['Photos'] = savePhotos_(b.photos, 'memory', `Memory from ${name}`);
         return saved_('memories', row);
+      }
+      if (action === 'tags') {
+        const recipeId = req_(b.recipeId, 'recipe', 200);
+        const tags = clean_(b.tags, 300) || 'Other';
+        return saved_('tags', { 'Recipe ID': recipeId, 'Recipe': clean_(b.recipe, 200), 'Name': name, 'Tags': tags });
       }
       if (action === 'cover') {
         const recipeId = req_(b.recipeId, 'recipe', 200), recipe = clean_(b.recipe, 200);

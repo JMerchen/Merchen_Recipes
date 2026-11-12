@@ -126,6 +126,19 @@ photos in a shared Drive folder. Recipes and memories sent through the Google Fo
 **Hiding something:** type `yes` in its **Hide** column (in whichever tab it's in). It disappears right away.
 For a cover photo, hiding the row puts the previous cover back.
 
+## Tags and the contributor question
+
+**Tags:** a recipe can have several tags (say *Breads*, *Breakfast* and *Holidays*), and it shows up under
+each one on the home page. Anyone can change a recipe's tags with **✎ Edit tags** at the top of the recipe.
+In the sheet and in `data/family-recipes.csv`, tags are stored in the Category column, separated by commas.
+To let the Google Form pick several too, change its Category question from *Dropdown* to *Checkboxes*.
+
+**Contributor question:** the first time someone adds or changes anything in a browser session, the site
+asks "What's the family number?" The question and answer are `contributorQuestion` and `contributorCode`
+in `config.js`; the Apps Script checks the same answer (`ACCESS_CODE` in `google/comments-backend.gs`),
+so keep the two the same. It keeps out strangers and bots, but the answer is visible in the site's public
+code, so it isn't a password.
+
 ## Gallery search
 
 The Gallery has a search box. It matches in two ways:

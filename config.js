@@ -31,4 +31,9 @@ window.SITE_CONFIG = {
   // Web app URL (ends in /exec) from deploying google/comments-backend.gs.
   // Turns on "Comments & photos" under every recipe. Leave empty to hide it.
   commentsApiUrl: "https://script.google.com/macros/s/AKfycbyMsbhuECCbHVohl1bU8m03J7uoGri1MMZhCWaAT9T88dzCCGrpRC2-FubTiXwbOenn/exec",
+
+  // Anyone adding or changing something answers this once per browser session.
+  // Keep contributorCode the same as ACCESS_CODE in google/comments-backend.gs. Leave empty to turn it off.
+  contributorQuestion: "What's the family number?",
+  contributorCode: "13",
 };
