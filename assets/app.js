@@ -1048,7 +1048,7 @@
   function photoStack(m) {
     if (!m.photos.length) return "";
     const behind = m.photos.slice(1, 3);
-    return `<div class="stack${behind.length ? " has-more" : ""}">
+    return `<div class="stack${behind.length ? " has-more" : ""}" data-photos="${esc(m.photos.join(" "))}">
       ${behind.map((p, k) => `<div class="stack-card stack-${k + 1}" style="background-image:url('${esc(p)}')"></div>`).reverse().join("")}
       <img class="stack-front" src="${esc(m.photos[0])}" alt="" loading="lazy" referrerpolicy="no-referrer">
       ${m.photos.length > 1 ? `<span class="stack-count">${m.photos.length} photos</span>` : ""}
@@ -1163,12 +1163,71 @@
     run(q0);
   }
 
+  // Hovering a stacked memory flips through its photos like cards; leaving flips back to the first.
+  const FLIP_EVERY = 2400, FLIP_HALF = 420;
+  let flipping = null;
+  function flipTo(stack, photos, idx) {
+    const front = stack.querySelector(".stack-front");
+    const count = stack.querySelector(".stack-count");
+    const behind = [...stack.querySelectorAll(".stack-card")].reverse();
+    const swap = () => {
+      front.src = photos[idx];
+      behind.forEach((c, k) => { c.style.backgroundImage = `url('${photos[(idx + k + 1) % photos.length]}')`; });
+      if (count) count.textContent = idx ? `${idx + 1} of ${photos.length}` : `${photos.length} photos`;
+    };
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) { swap(); return; }
+    front.classList.remove("flip-in");
+    front.classList.add("flip-out");
+    setTimeout(() => {
+      swap();
+      front.classList.remove("flip-out");
+      void front.offsetWidth;
+      front.classList.add("flip-in");
+    }, FLIP_HALF);
+  }
+  function startFlipping(card) {
+    if (flipping && flipping.card === card) return;
+    stopFlipping();
+    const stack = card.querySelector(".stack.has-more");
+    if (!stack) return;
+    const photos = stack.dataset.photos.split(" ").filter(Boolean);
+    // Keep the card the same size while flipping, whatever shape the other photos are.
+    const front = stack.querySelector(".stack-front");
+    if (front.offsetHeight) { front.style.height = front.offsetHeight + "px"; front.style.objectFit = "cover"; }
+    photos.forEach(src => { const i = new Image(); i.referrerPolicy = "no-referrer"; i.src = src; });  // preload
+    flipping = { card, stack, photos, idx: 0, timer: null };
+    const f = flipping;
+    const step = () => {
+      f.idx = (f.idx + 1) % photos.length;
+      flipTo(stack, photos, f.idx);
+      f.timer = setTimeout(step, FLIP_EVERY);
+    };
+    f.timer = setTimeout(step, 600);
+  }
+  function stopFlipping() {
+    if (!flipping) return;
+    const f = flipping;
+    flipping = null;
+    clearTimeout(f.timer);
+    const front = f.stack.querySelector(".stack-front");
+    const release = () => { if (!flipping || flipping.stack !== f.stack) { front.style.height = ""; front.style.objectFit = ""; } };
+    if (f.idx !== 0 && f.stack.isConnected) { flipTo(f.stack, f.photos, 0); setTimeout(release, FLIP_HALF * 2 + 50); }
+    else release();
+  }
+  document.addEventListener("mouseover", e => {
+    const card = e.target.closest && e.target.closest(".memory-open");
+    if (card) startFlipping(card);
+    else stopFlipping();
+  });
+  document.addEventListener("mouseleave", stopFlipping);
+
   // ── Router ──────────────────────────────────────────────────
   function route() {
     const hash = location.hash.replace(/^#\/?/, "");
     const [page, arg] = hash.split("/");
     document.title = CFG.siteTitle || "Family Recipes";
     if (galleryCleanup) { galleryCleanup(); galleryCleanup = null; }
+    stopFlipping();
     const section = page === "memories" || page === "memory" || page === "add-memory" ? "memories"
       : page === "gallery" ? "gallery"
       : page === "share" || page === "add-recipe" ? "" : "recipes";

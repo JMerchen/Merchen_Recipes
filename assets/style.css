@@ -353,6 +353,11 @@ dialog.gate input { font-size: 1.3rem !important; text-align: center; letter-spa
 .stack { position: relative; margin: 0; }
 .stack.has-more { margin: 16px 18px 4px; }
 .stack-front { position: relative; z-index: 3; width: 100%; display: block; }
+.stack.has-more { perspective: 1000px; }
+.stack-front.flip-out { animation: flipOut .42s ease-in forwards; }
+.stack-front.flip-in { animation: flipIn .42s ease-out; }
+@keyframes flipOut { to { transform: rotateY(90deg) scale(.97); } }
+@keyframes flipIn { from { transform: rotateY(-90deg) scale(.97); } to { transform: none; } }
 .stack.has-more .stack-front { border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
 .stack-card {
   position: absolute; inset: 0; border-radius: 10px; background: var(--surface-2) center / cover no-repeat;
