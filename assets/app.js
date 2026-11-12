@@ -4,7 +4,7 @@
 
   const CFG = window.SITE_CONFIG || {};
   const app = document.getElementById("app");
-  const state = { recipes: [], memories: [], comments: [], covers: [], tagEdits: [], seen: {}, apiVersion: 0, galleryQuery: "", query: "", tags: [], sort: "newest" };
+  const state = { recipes: [], memories: [], comments: [], covers: [], tagEdits: [], seen: {}, apiVersion: 0, galleryQuery: "", memoryQuery: "", query: "", tags: [], sort: "newest" };
 
   // ── Column matching ─────────────────────────────────────────
   // Each field is matched to the first unused sheet column whose header contains one of the keywords,
@@ -299,24 +299,25 @@
     </article>`;
   }
 
-  function commentsSection(r) {
+  // `key` is a recipe's slug, or "memory:<id>" for a memory.
+  function commentsSection(key, { empty = "No comments yet. Made this one? Tell us how it went, or add a photo.", placeholder = "Made this for Sunday dinner…" } = {}) {
     if (!CFG.commentsApiUrl) return "";
-    const list = commentsFor(r);
+    const list = state.comments.filter(c => c.recipeId === key).sort((a, b) => a.ts - b.ts);
     return `
       <section class="comments" id="comments">
         <h2 class="section-title">Comments &amp; photos</h2>
-        <div class="comment-list">${list.length ? list.map(commentHTML).join("") : `<p class="muted">No comments yet. Made this one? Tell us how it went, or add a photo.</p>`}</div>
+        <div class="comment-list">${list.length ? list.map(commentHTML).join("") : `<p class="muted">${esc(empty)}</p>`}</div>
         <form class="panel site-form comment-form" novalidate>
           <h3>Add a comment or photos</h3>
           ${nameField()}
-          ${field("Comment", `<textarea name="text" rows="3" maxlength="4000" placeholder="Made this for Sunday dinner…"></textarea>`, "(optional if you're adding photos)")}
+          ${field("Comment", `<textarea name="text" rows="3" maxlength="4000" placeholder="${esc(placeholder)}"></textarea>`, "(optional if you're adding photos)")}
           ${photoField("Add photos")}
           ${submitRow("Post")}
         </form>
       </section>`;
   }
 
-  function wireCommentForm(r) {
+  function wireCommentForm(key, title, rerender) {
     const form = app.querySelector(".comment-form");
     if (!form) return;
     const picker = photoPicker(form);
@@ -326,11 +327,11 @@
       build: (name, photos) => {
         const text = form.elements.text.value.trim();
         if (!text && !photos.length) throw friendly("Add a comment or a photo.");
-        return { action: "comment", recipeId: r.slug, recipe: r.title, text, photos };
+        return { action: "comment", recipeId: key, recipe: title, text, photos };
       },
       done: item => {
         if (item) state.comments.push(item);
-        renderRecipe(r.slug, { keepScroll: true });
+        rerender();
         const s = app.querySelector(".comment-form .status");
         if (s) s.textContent = "Thanks! It's posted.";
       },
@@ -608,7 +609,7 @@
       done: item => {
         const m = linkMemory({ ...item, by: item.by || "" });
         state.memories.unshift(m);
-        location.hash = m.linked ? `#/recipe/${m.linked.slug}` : "#/memories";
+        location.hash = `#/memory/${memoryId(m)}`;
       },
     });
     window.scrollTo(0, 0);
@@ -640,18 +641,19 @@
 
   function memoryCard(m, { showRecipe = true } = {}) {
     const meta = [m.by && `— ${m.by}`, m.when, m.people && `with ${m.people}`].filter(Boolean).join(" · ");
+    const n = memoryCommentCount(m);
     return `<article class="memory">
-      ${m.photos.map(p => {
-        const k = gallerySlides().findIndex(s => s.m === m && s.src === p);
-        const img = `<img src="${esc(p)}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
-        return k < 0 ? img : `<a class="memory-photo" href="#/gallery/${k}" aria-label="Open in gallery">${img}</a>`;
-      }).join("")}
-      <div class="memory-body">
-        ${m.title ? `<h3>${esc(m.title)}</h3>` : ""}
-        <div class="memory-text">${paragraphs(m.text)}</div>
-        ${meta ? `<div class="meta">${esc(meta)}</div>` : ""}
-        ${showRecipe && m.linked ? `<a class="recipe-link" href="#/recipe/${esc(m.linked.slug)}">🍽 ${esc(m.linked.title)} →</a>` : ""}
-      </div></article>`;
+      <a class="memory-open" href="#/memory/${esc(memoryId(m))}">
+        ${photoStack(m)}
+        <div class="memory-body">
+          ${m.title ? `<h3>${esc(m.title)}</h3>` : ""}
+          <div class="memory-text">${paragraphs(m.text)}</div>
+          ${meta ? `<div class="meta">${esc(meta)}</div>` : ""}
+          <div class="memory-more">${m.photos.length > 1 ? `See all ${m.photos.length} photos` : "Open"}${n ? ` · 💬 ${n}` : ""} →</div>
+        </div>
+      </a>
+      ${showRecipe && m.linked ? `<a class="recipe-link" href="#/recipe/${esc(m.linked.slug)}">🍽 ${esc(m.linked.title)} →</a>` : ""}
+    </article>`;
   }
 
   function renderHome() {
@@ -775,24 +777,13 @@
         ${addLink("memory", "Share a memory about this recipe", "btn btn-ghost", r)}
       </div>
       ${mems.length ? `<h2 class="section-title">Memories</h2><div class="memories card-memories">${mems.map(m => memoryCard(m, { showRecipe: false })).join("")}</div>` : ""}
-      ${commentsSection(r)}`;
-    wireCommentForm(r);
+      ${commentsSection(r.slug)}`;
+    wireCommentForm(r.slug, r.title, () => renderRecipe(r.slug, { keepScroll: true }));
     wireCover(r);
     wireTags(r);
     if (!keepScroll) window.scrollTo(0, 0);
   }
 
-  function renderMemories() {
-    app.innerHTML = `
-      <section class="hero">
-        <h1>Memories</h1>
-        <p>Stories, moments and people from around the table.</p>
-        <div class="hero-actions">${addLink("memory", "Share a memory")}${gallerySlides().length ? `<a class="btn btn-ghost" href="#/gallery">▶ Photo slideshow</a>` : ""}</div>
-      </section>
-      ${state.memories.length
-        ? `<div class="memories">${state.memories.map(m => memoryCard(m)).join("")}</div>`
-        : `<p class="empty">No memories yet. Be the first to share one!</p>`}`;
-  }
 
   function renderShare() {
     const missing = `<p><em>The form link hasn't been set up yet.</em></p>`;
@@ -1039,13 +1030,146 @@
     };
   }
 
+  // ── Memories: ids, photo stacks, detail page, search ────────
+  // A memory's id comes from its date, author and opening words, so it stays the same between visits.
+  function memoryId(m) {
+    if (m.id) return m.id;
+    const key = [m.ts, m.by, m.title, String(m.text || "").slice(0, 80)].join("|");
+    let h = 2166136261;
+    for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619) >>> 0;
+    const words = slugify(m.title || String(m.text || "").split(/\s+/).slice(0, 5).join(" ")).slice(0, 40).replace(/-+$/, "");
+    m.id = `${words || "memory"}-${h.toString(36)}`;
+    return m.id;
+  }
+  const memoryKey = m => "memory:" + memoryId(m);
+  const memoryCommentCount = m => state.comments.filter(c => c.recipeId === memoryKey(m)).length;
+
+  // First photo in front; up to two more peek out behind it like a little stack of prints.
+  function photoStack(m) {
+    if (!m.photos.length) return "";
+    const behind = m.photos.slice(1, 3);
+    return `<div class="stack${behind.length ? " has-more" : ""}">
+      ${behind.map((p, k) => `<div class="stack-card stack-${k + 1}" style="background-image:url('${esc(p)}')"></div>`).reverse().join("")}
+      <img class="stack-front" src="${esc(m.photos[0])}" alt="" loading="lazy" referrerpolicy="no-referrer">
+      ${m.photos.length > 1 ? `<span class="stack-count">${m.photos.length} photos</span>` : ""}
+    </div>`;
+  }
+
+  function renderMemory(id) {
+    const m = state.memories.find(x => memoryId(x) === id);
+    if (!m) { app.innerHTML = `<p class="empty">We couldn't find that memory. <a href="#/memories">Back to all memories</a></p>`; return; }
+    document.title = `${m.title || "A memory"} · ${CFG.siteTitle || "Family Recipes"}`;
+    const meta = [m.by && `Shared by <strong>${esc(m.by)}</strong>`, m.when && `<strong>${esc(m.when)}</strong>`, m.people && `With <strong>${esc(m.people)}</strong>`].filter(Boolean).map(x => `<span>${x}</span>`).join("");
+    app.innerHTML = `
+      <a class="back" href="#/memories">← All memories</a>
+      <article class="memory-detail">
+        ${m.title ? `<h1>${esc(m.title)}</h1>` : ""}
+        ${meta ? `<div class="facts">${meta}</div>` : ""}
+        ${m.photos.length ? `<div class="unfold${m.photos.length === 1 ? " single" : ""}">${m.photos.map(p => {
+          const k = gallerySlides().findIndex(s => s.m === m && s.src === p);
+          return `<a class="unfold-photo" href="#/gallery/${k}" aria-label="Open in slideshow"><img src="${esc(p)}" alt="" referrerpolicy="no-referrer"></a>`;
+        }).join("")}</div>` : ""}
+        <div class="memory-story">${paragraphs(m.text)}</div>
+        ${m.linked ? `<a class="recipe-link" href="#/recipe/${esc(m.linked.slug)}">🍽 ${esc(m.linked.title)} →</a>` : ""}
+      </article>
+      ${commentsSection(memoryKey(m), { empty: "No comments yet. Were you there? Add what you remember, or a photo.", placeholder: "I remember…" })}`;
+    wireCommentForm(memoryKey(m), m.title || String(m.text || "").slice(0, 60), () => renderMemory(id));
+    unfoldPhotos();
+    window.scrollTo(0, 0);
+  }
+
+  // The photos start stacked on top of the first one, then slide out into the grid ("FLIP" animation).
+  function unfoldPhotos() {
+    const box = app.querySelector(".unfold");
+    if (!box || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const items = [...box.querySelectorAll(".unfold-photo")];
+    if (items.length < 2) return;
+    const first = items[0].getBoundingClientRect();
+    items.forEach((el, k) => {
+      if (!k) return;
+      const r = el.getBoundingClientRect();
+      const rot = (k % 2 ? -1 : 1) * (3 + (k % 3) * 2);
+      el.style.transition = "none";
+      el.style.transform = `translate(${first.left - r.left}px, ${first.top - r.top}px) scale(${first.width / r.width}, ${first.height / r.height}) rotate(${rot}deg)`;
+      el.style.zIndex = String(items.length - k);
+    });
+    items[0].style.zIndex = String(items.length + 1);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      items.forEach((el, k) => {
+        if (!k) return;
+        el.style.transition = `transform .75s cubic-bezier(.2,.8,.2,1) ${120 + k * 70}ms`;
+        el.style.transform = "";
+      });
+    }));
+  }
+
+  function renderMemories() {
+    const q0 = state.memoryQuery || "";
+    app.innerHTML = `
+      <section class="hero">
+        <h1>Memories</h1>
+        <p>Stories, moments and people from around the table.</p>
+        <div class="hero-actions">${addLink("memory", "Share a memory")}${gallerySlides().length ? `<a class="btn btn-ghost" href="#/gallery">▶ Photo slideshow</a>` : ""}</div>
+      </section>
+      ${state.memories.length ? `
+        <div class="g-search">
+          <input class="search" type="search" placeholder="Search memories: holidays, Grandma, the lake, 1994…" aria-label="Search memories" value="${esc(q0)}">
+          <div class="chips g-suggest">${GALLERY_SUGGESTIONS.map(s => `<button class="chip" type="button" aria-pressed="${norm(s) === norm(q0)}">${esc(s)}</button>`).join("")}</div>
+          <p class="g-status muted" role="status"></p>
+        </div>
+        <div class="memory-results"></div>` : `<p class="empty">No memories yet. Be the first to share one!</p>`}`;
+    if (!state.memories.length) return;
+    const input = app.querySelector(".g-search input");
+    const statusEl = app.querySelector(".g-status");
+    const out = app.querySelector(".memory-results");
+    let seq = 0, debounce = null;
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    const show = list => {
+      out.innerHTML = list.length ? `<div class="memories">${list.map(m => memoryCard(m)).join("")}</div>`
+        : `<p class="empty">No memories match “${esc(input.value)}” yet.</p>`;
+    };
+    async function run(q) {
+      const my = ++seq;
+      state.memoryQuery = q;
+      app.querySelectorAll(".g-suggest .chip").forEach(c => c.setAttribute("aria-pressed", String(norm(c.textContent) === norm(q))));
+      if (!norm(q)) { statusEl.textContent = ""; show(state.memories); return; }
+      const S = window.MemorySearch;
+      const report = (res, extra = "") => {
+        show(res.matches);
+        const n = res.matches.length;
+        statusEl.textContent = !n ? extra
+          : res.closest ? `No exact matches for “${q}”. Showing the closest ${plural(n, "memory", "memories")}.`
+          : `${plural(n, "memory", "memories")} matching “${q}”.${extra ? " " + extra : ""}`;
+      };
+      if (!S) { report({ matches: state.memories.filter(m => norm(memoryWords(m)).includes(norm(q))) }); return; }
+      const quick = await S.search(state.memories, q, { keywordOnly: true });
+      if (my !== seq) return;
+      if (/^[0-9' ]+$/.test(norm(q))) { report(quick); return; }
+      report(quick, "Looking for more by meaning…");
+      try {
+        const smart = await S.search(state.memories, q);
+        if (my === seq) report(smart);
+      } catch (err) {
+        console.warn("Smart search unavailable", err);
+        if (my === seq) report(quick, "(Smart search couldn't load, so this matches exact words only.)");
+      }
+    }
+    input.addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(() => run(input.value), 350); });
+    input.addEventListener("focus", () => { if (window.MemorySearch) window.MemorySearch.loadModel().catch(() => {}); }, { once: true });
+    app.querySelectorAll(".g-suggest .chip").forEach(c => c.addEventListener("click", () => {
+      input.value = c.getAttribute("aria-pressed") === "true" ? "" : c.textContent;
+      run(input.value);
+    }));
+    run(q0);
+  }
+
   // ── Router ──────────────────────────────────────────────────
   function route() {
     const hash = location.hash.replace(/^#\/?/, "");
     const [page, arg] = hash.split("/");
     document.title = CFG.siteTitle || "Family Recipes";
     if (galleryCleanup) { galleryCleanup(); galleryCleanup = null; }
-    const section = page === "memories" || page === "add-memory" ? "memories"
+    const section = page === "memories" || page === "memory" || page === "add-memory" ? "memories"
       : page === "gallery" ? "gallery"
       : page === "share" || page === "add-recipe" ? "" : "recipes";
     document.querySelectorAll("[data-nav]").forEach(a => a.classList.toggle("active", a.dataset.nav === section));
@@ -1069,6 +1193,7 @@
     }
     if (page === "recipe") renderRecipe(decodeURIComponent(arg || ""));
     else if (page === "memories") renderMemories();
+    else if (page === "memory") renderMemory(decodeURIComponent(arg || ""));
     else if (page === "share") renderShare();
     else if (page === "gallery") renderGallery(arg);
     else if (page === "add-recipe") renderAddRecipe();

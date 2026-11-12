@@ -346,6 +346,40 @@ dialog.gate p { margin: 0; }
 dialog.gate input { font-size: 1.3rem !important; text-align: center; letter-spacing: .1em; }
 .gate-error { color: var(--accent); min-height: 1.4em; font-size: .95rem; }
 
+/* Memory cards: photo stack */
+.memory-open { display: block; color: inherit; text-decoration: none; }
+.memory-open:hover h3 { color: var(--accent); }
+.memory > .recipe-link { margin: -8px 20px 18px; }
+.stack { position: relative; margin: 0; }
+.stack.has-more { margin: 16px 18px 4px; }
+.stack-front { position: relative; z-index: 3; width: 100%; display: block; }
+.stack.has-more .stack-front { border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+.stack-card {
+  position: absolute; inset: 0; border-radius: 10px; background: var(--surface-2) center / cover no-repeat;
+  box-shadow: 0 2px 10px rgba(0,0,0,.15); transition: transform .35s cubic-bezier(.2,.8,.2,1);
+}
+.stack-1 { z-index: 2; transform: rotate(-4deg) translate(-6px, 4px); }
+.stack-2 { z-index: 1; transform: rotate(5deg) translate(8px, 6px); }
+.memory-open:hover .stack-1 { transform: rotate(-8deg) translate(-16px, 6px); }
+.memory-open:hover .stack-2 { transform: rotate(9deg) translate(18px, 8px); }
+.stack-count {
+  position: absolute; z-index: 4; right: 10px; bottom: 10px; padding: 3px 10px; border-radius: 999px;
+  background: rgba(20, 17, 15, .7); color: #fff; font: 600 .8rem var(--sans);
+}
+.memory-more { margin-top: 10px; font-weight: 600; font-size: .92rem; color: var(--accent); }
+
+/* Memory page: photos unfold out of the stack */
+.memory-detail { max-width: 860px; }
+.memory-detail h1 { font-size: clamp(2rem, 5vw, 3rem); }
+.unfold { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin: 8px 0 28px; }
+.unfold.single { grid-template-columns: 1fr; }
+.unfold-photo { display: block; position: relative; border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); background: var(--surface-2); will-change: transform; }
+.unfold-photo img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+.unfold.single img { aspect-ratio: auto; max-height: 640px; object-fit: contain; }
+.memory-story { font-size: 1.12rem; }
+.memory-story p { margin: 0 0 1em; }
+.memory-detail .recipe-link { font-size: 1rem; }
+
 @media print {
   .site-header, .site-footer, .notice, .back, .recipe-actions, .tag-edit, .tags-form, .comments, .cover-btn, .cover-form, .cover-empty, .section-title, .memories, .card-memories { display: none !important; }
   body { background: #fff; color: #000; font-size: 12pt; }
