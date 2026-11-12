@@ -4,7 +4,7 @@
 
   const CFG = window.SITE_CONFIG || {};
   const app = document.getElementById("app");
-  const state = { recipes: [], memories: [], comments: [], covers: [], tagEdits: [], seen: {}, apiVersion: 0, galleryQuery: "", query: "", category: "All", sort: "newest" };
+  const state = { recipes: [], memories: [], comments: [], covers: [], tagEdits: [], seen: {}, apiVersion: 0, galleryQuery: "", query: "", tags: [], sort: "newest" };
 
   // ── Column matching ─────────────────────────────────────────
   // Each field is matched to the first unused sheet column whose header contains one of the keywords,
@@ -408,7 +408,11 @@
       const t = raw.trim().replace(/\s+/g, " ").slice(0, 40);
       if (!t || seen.has(t.toLowerCase())) continue;
       seen.add(t.toLowerCase());
-      out.push(known.get(t.toLowerCase()) || t.charAt(0).toUpperCase() + t.slice(1));
+      const l = t.toLowerCase();
+      // "Holiday" and "Holidays", "Dessert" and "Desserts" are the same built-in tag.
+      const canon = known.get(l) || known.get(l + "s") || known.get(l.replace(/s$/, "")) || t.charAt(0).toUpperCase() + t.slice(1);
+      if (out.includes(canon)) continue;
+      out.push(canon);
     }
     const tags = out.length > 1 ? out.filter(t => t !== "Other") : out;
     return tags.length ? tags : ["Other"];
@@ -651,8 +655,6 @@
   }
 
   function renderHome() {
-    if (state.category !== "All" && !allTags().includes(state.category)) state.category = "All";
-    const cats = ["All", ...allTags()];
     app.innerHTML = `
       <section class="hero${CFG.familyPhoto ? " hero-photo" : ""}">
         ${CFG.familyPhoto
@@ -672,7 +674,7 @@
           <option value="az"${state.sort === "az" ? " selected" : ""}>A to Z</option>
         </select>
       </div>
-      <div class="chips">${cats.map(c => `<button class="chip" aria-pressed="${c === state.category}" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}</div>
+      <div class="chips tag-filter" role="group" aria-label="Filter by tag"></div>
       <div id="results"></div>
       ${state.memories.length ? `
         <h2 class="section-title">Recent memories</h2>
@@ -682,24 +684,46 @@
     const search = app.querySelector(".search");
     search.addEventListener("input", e => { state.query = e.target.value; renderResults(); });
     app.querySelector("select").addEventListener("change", e => { state.sort = e.target.value; renderResults(); });
-    app.querySelectorAll(".chip").forEach(b => b.addEventListener("click", () => {
-      state.category = b.dataset.cat;
-      app.querySelectorAll(".chip").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    renderResults();
+  }
+
+  // Tag chips: each tag toggles on and off; with several on, a recipe must have all of them.
+  // Each chip shows how many recipes you'd see if you turned it on, given the search and the other chips.
+  function renderTagFilter(textMatch) {
+    const box = app.querySelector(".tag-filter");
+    if (!box) return;
+    const tags = allTags();
+    state.tags = state.tags.filter(t => tags.includes(t));
+    const sel = state.tags;
+    const hasAll = (r, want) => want.every(t => r.tags.includes(t));
+    const count = want => state.recipes.filter(r => textMatch(r) && hasAll(r, want)).length;
+    box.innerHTML =
+      `<button class="chip" type="button" data-all aria-pressed="${!sel.length}">All</button>` +
+      tags.map(t => {
+        const on = sel.includes(t);
+        const n = count(on ? sel : [...sel, t]);
+        return `<button class="chip" type="button" data-tag="${esc(t)}" aria-pressed="${on}"${!on && !n ? " disabled" : ""}>${esc(t)} <span class="chip-count">${n}</span></button>`;
+      }).join("");
+    box.querySelector("[data-all]").addEventListener("click", () => { state.tags = []; renderResults(); });
+    box.querySelectorAll("[data-tag]").forEach(b => b.addEventListener("click", () => {
+      const t = b.dataset.tag;
+      state.tags = state.tags.includes(t) ? state.tags.filter(x => x !== t) : [...state.tags, t];
       renderResults();
     }));
-    renderResults();
   }
 
   function renderResults() {
     const q = norm(state.query);
-    let list = state.recipes.filter(r =>
-      (state.category === "All" || r.tags.includes(state.category)) &&
-      (!q || norm([r.title, r.origin, r.by, r.category, r.ingredients, r.story].join(" ")).includes(q)));
+    const textMatch = r => !q || norm([r.title, r.origin, r.by, r.category, r.ingredients, r.story].join(" ")).includes(q);
+    renderTagFilter(textMatch);
+    let list = state.recipes.filter(r => state.tags.every(t => r.tags.includes(t)) && textMatch(r));
     list = list.slice().sort(state.sort === "az" ? (a, b) => a.title.localeCompare(b.title) : (a, b) => b.ts - a.ts);
     const el = document.getElementById("results");
     el.innerHTML = list.length
       ? `<div class="grid">${list.map(recipeCard).join("")}</div>`
-      : `<p class="empty">${state.recipes.length ? "No recipes match that search." : "No recipes yet. Be the first to add one!"}</p>`;
+      : `<p class="empty">${!state.recipes.length ? "No recipes yet. Be the first to add one!"
+          : state.tags.length > 1 ? `No recipes are tagged ${state.tags.map(esc).join(" and ")}${q ? " and match that search" : ""}.`
+          : "No recipes match that search."}</p>`;
   }
 
   function renderRecipe(slug, { keepScroll = false } = {}) {
@@ -1026,7 +1050,8 @@
       : page === "share" || page === "add-recipe" ? "" : "recipes";
     document.querySelectorAll("[data-nav]").forEach(a => a.classList.toggle("active", a.dataset.nav === section));
     if (page === "tag") {
-      state.category = decodeURIComponent(arg || "All");
+      const t = decodeURIComponent(arg || "");
+      state.tags = t ? [t] : [];
       state.query = "";
       history.replaceState(null, "", "#/");
       renderHome();
